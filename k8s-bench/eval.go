@@ -250,11 +250,9 @@ func evaluateTask(ctx context.Context, config EvalConfig, taskID string, task Ta
 		return result
 	}
 
-	expectationsMet := false
 	var expectationFailures []model.Failure
-	if len(task.Expect) > 0 {
-		expectationsMet = true
 
+	if len(task.Expect) > 0 {
 		// find the output after the last run command and search it
 		var lastCmdOutput string
 		lastToolRunIndex := strings.LastIndex(agentOutput, "Running:")
@@ -277,19 +275,17 @@ func evaluateTask(ctx context.Context, config EvalConfig, taskID string, task Ta
 					expectationFailures = append(expectationFailures, model.Failure{
 						Message: fmt.Sprintf("invalid regex %q in task spec: %v", expect.Contains, err),
 					})
-					expectationsMet = false
 					continue
 				}
 				if !re.MatchString(lastCmdOutput) {
 					expectationFailures = append(expectationFailures, model.Failure{
 						Message: fmt.Sprintf("regex %q did not match output %q", expect.Contains, lastCmdOutput),
 					})
-					expectationsMet = false
 				}
 			}
 		}
 
-		if expectationsMet {
+		if len(expectationFailures) == 0 {
 			fmt.Printf("\nAll output expectations met\n")
 		}
 	}
@@ -310,6 +306,7 @@ func evaluateTask(ctx context.Context, config EvalConfig, taskID string, task Ta
 		}
 	}
 
+	expectationsMet := len(task.Expect) > 0 && len(expectationFailures) == 0
 	if verifierSucceeded || expectationsMet {
 		result.Result = "success"
 	} else {
