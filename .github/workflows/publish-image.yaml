@@ -2,7 +2,11 @@ name: Build & Publish kubectl-ai image
 
 on:
   workflow_dispatch:
-    
+    inputs: 
+      push:
+        description: "actually push to registry"
+        required: false
+        default: "true"
 permissions: 
   contents: read
   packages: write
@@ -33,7 +37,7 @@ jobs:
         with:
           context: .
           file: images/kubectl-ai/Dockerfile
-          push: true
+          push: ${{ inputs.push == 'true' }}
           platforms: linux/amd64
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMGAGE_NAME }}:${{ steps.tag.outputs.value }}
