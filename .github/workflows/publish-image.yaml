@@ -2,18 +2,14 @@ name: Build & Publish kubectl-ai image
 
 on:
   workflow_dispatch:
-    inputs: 
-      push:
-        description: "actually push to registry"
-        required: false
-        default: "true"
-permissions: 
+
+permissions:
   contents: read
   packages: write
 
 env:
   REGISTRY: ghcr.io
-  IMGAGE_NAME: $ {{ github.repository_owner }}/kubectl-ai 
+  IMAGE_NAME: kubectl-ai
 
 jobs:
   build-and-push:
@@ -28,27 +24,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Compute image tag
-        id: tag
-        run: echo "value=$(date -u + '%Y%m%d-%H%M')" >> "$GITHUB_OUTPUT"
+      - name: Docker Metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=schedule,pattern={{date 'YYYYMMDD-HHmm' tz='UTC'}}
+            type=raw,value=latest
 
       - name: Build and Publish image
         uses: docker/build-push-action@v5
         with:
           context: .
           file: images/kubectl-ai/Dockerfile
-          push: ${{ inputs.push == 'true' }}
+          push: true
           platforms: linux/amd64
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMGAGE_NAME }}:${{ steps.tag.outputs.value }}
-            ${{ env.REGISTRY }}/${{ env.IMGAGE_NAME }}:latest
-
-
-
-
-
-
-
-
-
-
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
