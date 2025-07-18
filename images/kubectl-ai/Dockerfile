@@ -12,7 +12,6 @@ COPY cmd/ ./cmd/
 COPY pkg/ ./pkg/
 
 RUN CGO_ENABLED=0 go build -o kubectl-ai ./cmd/
-
 FROM debian:bookworm-slim AS kubectl-tool
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && \
@@ -35,7 +34,6 @@ RUN apt-get update -y && \
 
 COPY --from=builder /src/kubectl-ai /bin/kubectl-ai
 COPY --from=kubectl-tool /opt/tools/kubectl/ /opt/tools/kubectl/
-
 RUN ln -sf /opt/tools/kubectl/bin/kubectl /bin/kubectl
 
 ENTRYPOINT [ "/bin/kubectl-ai" ]

@@ -324,7 +324,7 @@ Below is a sample command that can be used to launch the container with a locall
 docker run --rm -it \
   -p 8080:8080 \
   -v ~/.kube:/root/.kube:ro \
-  -v ~/.config/gcloud:/root/.config/gcloud \
+  -v ~/.config/gcloud:/root/.config/gcloud
   kubectl-ai:latest \
   --llm-provider vertexai \
   --ui-listen-address 0.0.0.0:8080 \
