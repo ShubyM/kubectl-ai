@@ -1,4 +1,4 @@
-# 1. Build the Docker Image 🏗️
+# 1. Build the Docker Image 
 
 First, clone the `kubectl-ai` repository and build the Docker image from the source code.
 
@@ -8,50 +8,42 @@ cd kubectl-ai
 docker build -t kubectl-ai:latest -f images/kubectl-ai/Dockerfile .
 ```
 
-# 2. Provide Credentials to the Container 
+# 2. Running against a GKE cluster
+To access a GKE cluster, `kubectl-ai` needs two configurations from your local machine: **Google Cloud credentials** and a **Kubernetes config file**.
 
-The `kubectl-ai` container needs credentials to communicate with your Kubernetes cluster and Google Cloud services. You provide these by mounting local configuration files into the container when you run it.
+## Create Google Cloud Credentials
 
-#### **Kubernetes Cluster Access (`kubeconfig`)**
+First, create Application Default Credentials [(ADC)](https://cloud.google.com/docs/authentication/application-default-credentials). `kubectl` uses these credentials to authenticate with your GKE cluster.
 
-`kubectl-ai` uses a **`kubeconfig`** file to find and authenticate with your Kubernetes cluster. This file is typically located at `~/.kube/config`.
+```bash
+gcloud auth application-default login
+```
 
-  * To generate this file for a Google Kubernetes Engine (GKE) cluster, run the following `gcloud` command:
+This command saves your credentials into the `~/.config/gcloud` directory.
 
-    ```bash
-    gcloud container clusters get-credentials <cluster-name> --location <location>
-    ```
+## Configure `kubectl`
 
-  * You'll later mount this directory into the container using the `-v` flag, like this: `-v ~/.kube:/root/.kube`.
+Next, generate the `kubeconfig` file. This file tells `kubectl` which cluster to connect to and to use your ADC credentials for authentication.
 
-    > **Note:** You can also specify a custom path to your config file using the `KUBECONFIG` environment variable.
+```bash
+gcloud container clusters get-credentials <cluster-name> --location <location>
+```
 
-#### **Google Cloud API Access (ADC)**
-
-To use Google Cloud services like the Vertex AI model provider, `kubectl-ai` requires **Application Default Credentials (ADC)**.
-
-  * On Google Cloud Shell or a GCE VM, these credentials are provided automatically.
-
-  * On your local machine, generate them by running:
-
-    ```bash
-    gcloud auth application-default login
-    ```
-
-  * This command saves credentials to `~/.config/gcloud`. You'll also mount this directory into the container: `-v ~/.config/gcloud:/root/.config/gcloud`.
+This updates the configuration file at `~/.kube/config`.
 
 # 3. Running the Container
 
+Finally, mount both configuration directories into the `kubectl-ai` container when you run it.
 This example shows how to run `kubectl-ai` with a web interface, mounting all necessary credentials and providing a Gemini API key.
 
 ```bash
 export GEMINI_API_KEY="your_api_key_here"
-docker run --rm -it -p 8080:8080 -v ~/.kube:/root/.kube -e GEMINI_API_KEY kubectl-ai:latest --ui-listen-address 0.0.0.0:8080 --ui-type web
+docker run --rm -it -p 8080:8080 -v ~/.kube:/root/.kube -v ~/.config/gcloud:/root/.config/gcloud -e GEMINI_API_KEY kubectl-ai:latest --ui-listen-address 0.0.0.0:8080 --ui-type web
 ```
 
 Alternativley with the default terminal ui:
 
 ```bash
 export GEMINI_API_KEY="your_api_key_here"
-docker run --rm -it -v ~/.kube:/root/.kube -e GEMINI_API_KEY kubectl-ai:latest --ui-listen-address 0.0.0.0:8080 
+docker run --rm -it -v ~/.kube:/root/.kube -v ~/.config/gcloud:/root/.config/gcloud -e GEMINI_API_KEY kubectl-ai:latest 
 ```
