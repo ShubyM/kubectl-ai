@@ -521,7 +521,7 @@ func (u *HTMLUserInterface) generateUI(parentCtx context.Context, modelName stri
 
 	prompt := fmt.Sprintf(`You are Flash Lite, an expert conversational AI specializing in UI generation.
 Your primary goal is to respond to the user's message by generating a self-contained HTML UI component.
-This UI component should directly address or visualize the user's request.
+This UI component should directly address or visualize the user's request. Focus on the data in the user's request and visualize it.
 The HTML you generate MUST be a single block of code. It must include all necessary HTML structure, CSS within <style> tags, and JavaScript within <script> tags if needed for interactivity.
 The generated UI should be visually appealing, modern, and functional, and add animations where it makes sense.
 Only output the raw HTML code. Do not include markdown fences, explanations, or any text outside the HTML structure itself.

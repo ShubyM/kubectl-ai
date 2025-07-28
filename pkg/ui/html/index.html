@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>kubectl-ai</title>
+    <title>k8</title>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -281,15 +281,15 @@
             const [promptGroups, setPromptGroups] = useState([]);
             const [visualizationCache, setVisualizationCache] = useState({});
             const [visualizationMode, setVisualizationMode] = useState(() => {
-                return localStorage.getItem('kubectl-ai-viz-mode') || 'single';
+                return localStorage.getItem('k8-viz-mode') || 'single';
             });
             const [sidebarWidth, setSidebarWidth] = useState(() => {
-                const savedWidth = localStorage.getItem('kubectl-ai-sidebar-width');
+                const savedWidth = localStorage.getItem('k8-sidebar-width');
                 return savedWidth ? parseInt(savedWidth, 10) : 260; // Default width
             });
             const [isDarkMode, setIsDarkMode] = useState(() => {
                 // Check for saved preference first
-                const saved = localStorage.getItem('kubectl-ai-dark-mode');
+                const saved = localStorage.getItem('k8-dark-mode');
                 if (saved !== null) {
                     return JSON.parse(saved);
                 }
@@ -333,11 +333,11 @@
 
             // Save sidebar width to localStorage whenever it changes
             useEffect(() => {
-                localStorage.setItem('kubectl-ai-sidebar-width', sidebarWidth);
+                localStorage.setItem('k8-sidebar-width', sidebarWidth);
             }, [sidebarWidth]);
 
             useEffect(() => {
-                localStorage.setItem('kubectl-ai-viz-mode', visualizationMode);
+                localStorage.setItem('k8-viz-mode', visualizationMode);
             }, [visualizationMode]);
 
             const scrollToBottom = () => {
@@ -372,7 +372,7 @@
             const toggleDarkMode = () => {
                 const newDarkMode = !isDarkMode;
                 setIsDarkMode(newDarkMode);
-                localStorage.setItem('kubectl-ai-dark-mode', JSON.stringify(newDarkMode));
+                localStorage.setItem('k8-dark-mode', JSON.stringify(newDarkMode));
             };
 
             // Apply dark mode to document body
@@ -390,7 +390,7 @@
                 
                 const handleThemeChange = (e) => {
                     // Only auto-update if user hasn't manually set a preference
-                    const hasManualPreference = localStorage.getItem('kubectl-ai-dark-mode') !== null;
+                    const hasManualPreference = localStorage.getItem('k8-dark-mode') !== null;
                     if (!hasManualPreference) {
                         setIsDarkMode(e.matches);
                     }
@@ -436,7 +436,7 @@
                 
                 eventSource.onopen = () => {
                     setIsConnected(true);
-                    console.log('Connected to kubectl-ai');
+                    console.log('Connected to k8');
                 };
 
                 eventSource.onmessage = (event) => {
@@ -727,7 +727,7 @@
                         };
                         case 'model': 
                         case 'agent': return { 
-                            name: 'AI Assistant', 
+                            name: 'k8', 
                             color: isDarkMode ? 'text-gray-200' : 'text-gray-700', 
                             bg: isDarkMode ? 'bg-gray-700' : 'bg-gray-200', 
                             avatar: '🤖' 
@@ -964,7 +964,7 @@
                         </div>
                         <div className="flex-1 min-w-0">
                             <div className={`text-sm font-medium mb-1 ${isDarkMode ? 'text-emerald-400' : 'text-emerald-700'}`}>
-                                AI Assistant
+                                k8
                             </div>
                             <div className="flex items-center space-x-2">
                                 <div className="flex items-center space-x-1">
@@ -1052,8 +1052,8 @@
                                     <span className="text-white font-bold text-sm">K8</span>
                                 </div>
                                 <div>
-                                    <h1 className={`text-xl font-bold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>kubectl-ai</h1>
-                                    <p className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>Your intelligent Kubernetes assistant</p>
+                                    <h1 className={`text-xl font-bold ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>k8</h1>
+                                    <p className={`text-sm ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>Intelligent interface to your k8s</p>
                                 </div>
                             </div>
                             <div className="flex items-center space-x-4">
@@ -1162,7 +1162,7 @@
                                             <div className="w-16 h-16 bg-gradient-to-br from-brand-500 to-brand-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
                                                 <span className="text-white text-2xl">🚀</span>
                                             </div>
-                                            <h2 className={`text-2xl font-bold ${isDarkMode ? 'text-white' : 'text-gray-900'} mb-2`}>Welcome to kubectl-ai</h2>
+                                            <h2 className={`text-2xl font-bold ${isDarkMode ? 'text-white' : 'text-gray-900'} mb-2`}>Welcome to k8</h2>
                                             <p className={`${isDarkMode ? 'text-gray-300' : 'text-gray-600'} mb-8 max-w-md mx-auto`}>
                                                 I'm your intelligent Kubernetes assistant. I can help you manage deployments, 
                                                 troubleshoot issues, and answer questions about your cluster.
@@ -1245,10 +1245,25 @@
                                             <span className="font-medium text-sm">Prompts</span>
                                         </button>
                                     </form>
-                                    <div className={`flex items-center justify-center mt-3 text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'} space-x-3`}>
-                                        <span className="font-medium">Try:</span>
-                                        <button onClick={() => setInput('scale nginx to 3 replicas')} className={`px-2 py-1 rounded-md transition-colors ${isDarkMode ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-200 hover:bg-gray-300'}`}>"scale nginx to 3 replicas"</button>
-                                        <button onClick={() => setInput('show me pod status')} className={`px-2 py-1 rounded-md transition-colors ${isDarkMode ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-200 hover:bg-gray-300'}`}>"show me pod status"</button>
+                                    <div className="flex space-x-3 mt-3">
+                                        <div className={`flex-1 flex items-center justify-center text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'} space-x-3`}>
+                                            <span className="font-medium">Try:</span>
+                                            <button onClick={() => setInput('scale nginx to 3 replicas')} className={`px-2 py-1 rounded-md transition-colors ${isDarkMode ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-200 hover:bg-gray-300'}`}>"scale nginx to 3 replicas"</button>
+                                            <button onClick={() => setInput('show me pod status')} className={`px-2 py-1 rounded-md transition-colors ${isDarkMode ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-200 hover:bg-gray-300'}`}>"show me pod status"</button>
+                                        </div>
+                                        <div className="invisible">
+                                            {/* Spacer to match Send button width */}
+                                            <div className="px-5 py-2.5">
+                                                <span>Send</span>
+                                                <svg className="w-5 h-5 inline ml-2"></svg>
+                                            </div>
+                                        </div>
+                                        <div className="invisible">
+                                            {/* Spacer to match Prompts button width */}
+                                            <div className="px-4 py-2.5">
+                                                <span className="text-sm">Prompts</span>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
