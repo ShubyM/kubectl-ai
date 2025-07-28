@@ -129,6 +129,7 @@ func NewHTMLUserInterface(sessions *agent.SessionManager, listenAddress string, 
 	mux.HandleFunc("GET /api/sessions", u.handleListSessions)
 	mux.HandleFunc("POST /api/sessions", u.handleCreateSession)
 	mux.HandleFunc("POST /api/sessions/{id}/rename", u.handleRenameSession)
+	mux.HandleFunc("DELETE /api/sessions/{id}", u.handleDeleteSession)
 	mux.HandleFunc("GET /api/sessions/{id}/stream", u.handleSessionStream)
 	mux.HandleFunc("POST /api/sessions/{id}/send-message", u.handlePOSTSendMessage)
 	mux.HandleFunc("POST /api/sessions/{id}/choose-option", u.handlePOSTChooseOption)
@@ -388,21 +389,72 @@ func (u *HTMLUserInterface) handleListSessions(w http.ResponseWriter, req *http.
 func (u *HTMLUserInterface) handleCreateSession(w http.ResponseWriter, req *http.Request) {
 	// Use a background context so the session survives beyond this HTTP request.
 	ctx := context.Background()
+
+	var name, query string
+
+	contentType := req.Header.Get("Content-Type")
+	if strings.HasPrefix(contentType, "application/json") {
+		var payload struct {
+			Name  string `json:"name"`
+			Query string `json:"query"`
+		}
+		if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+			http.Error(w, "invalid JSON body", http.StatusBadRequest)
+			return
+		}
+		name = payload.Name
+		query = payload.Query
+	} else if strings.HasPrefix(contentType, "application/x-www-form-urlencoded") {
+		if err := req.ParseForm(); err != nil {
+			http.Error(w, "failed to parse form", http.StatusBadRequest)
+			return
+		}
+		name = req.FormValue("name")
+		query = req.FormValue("query")
+	}
+
 	ag, err := u.sessions.CreateSession(ctx)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	if name != "" {
+		if err := u.sessions.RenameSession(ag.Session().ID, name); err != nil {
+			// This is not fatal, we can log it and continue.
+			klog.Warningf("failed to rename new session %s to %q: %v", ag.Session().ID, name, err)
+		}
+	}
+
 	// Start agent loop.
 	go func() {
-		if err := ag.Run(ctx, ""); err != nil {
+		if err := ag.Run(ctx, query); err != nil {
 			klog.Errorf("agent run error for session %s: %v", ag.Session().ID, err)
 		}
 	}()
 
-	resp := map[string]string{"id": ag.Session().ID}
+	scheme := "http"
+	if req.TLS != nil {
+		scheme = "https"
+	}
+	// Note: req.Host is used as it includes the port number.
+	url := fmt.Sprintf("%s://%s/?session=%s", scheme, req.Host, ag.Session().ID)
+
+	w.Header().Set("Content-Type", "application/json")
+	resp := map[string]string{
+		"id":  ag.Session().ID,
+		"url": url,
+	}
 	json.NewEncoder(w).Encode(resp)
+}
+
+func (u *HTMLUserInterface) handleDeleteSession(w http.ResponseWriter, req *http.Request) {
+	sessionID := req.PathValue("id")
+	if err := u.sessions.DeleteSession(sessionID); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
 func (u *HTMLUserInterface) handleRenameSession(w http.ResponseWriter, req *http.Request) {

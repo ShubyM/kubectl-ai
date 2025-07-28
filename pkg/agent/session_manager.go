@@ -81,6 +81,23 @@ func (sm *SessionManager) RenameSession(sessionID, newName string) error {
 	return nil
 }
 
+// DeleteSession stops the Agent and removes the session. Returns error if not found.
+func (sm *SessionManager) DeleteSession(sessionID string) error {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	ag, ok := sm.sessions[sessionID]
+	if !ok {
+		return fmt.Errorf("session not found")
+	}
+
+	if err := ag.Close(); err != nil {
+		klog.Warningf("closing agent for session %s: %v", sessionID, err)
+	}
+
+	delete(sm.sessions, sessionID)
+	return nil
+}
+
 // Close shuts down all Agents and clears the manager.  Any errors encountered
 // are logged and ignored – this is intended for best-effort cleanup at
 // process exit.

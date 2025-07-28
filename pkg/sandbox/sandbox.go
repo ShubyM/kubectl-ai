@@ -282,7 +282,7 @@ func (c *Cmd) createPod() error {
 					Name:    "main",
 					Image:   sandbox.image,
 					Command: []string{"sleep"},
-					Args:    []string{"3600"}, // Sleep for 1 hour to keep container running
+					Args:    []string{"infinity"}, // Sleep forever to keep the container running
 					Env: []corev1.EnvVar{
 						{
 							Name:  "KUBECONFIG",
