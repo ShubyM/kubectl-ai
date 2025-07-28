@@ -1,9 +1,9 @@
 - group: Analyze
   items:
-    - "Analyze resource usage in the cluster and list top pods by memory and cpu usage."
-    - "Analyze resource usage in the cluster and list top namespaces by memory and cpu usage."
+    - "Analyze resource usage in the cluster and list top pods by memory and cpu usage. Show the results in a nice table."
+    - "Analyze resource usage in the cluster and list top namespaces by memory and cpu usage. Show the results in a nice table."
     - "analyze resources usage by nodes in the cluster"
-    - "can you analyze nodes by their accelerator types"
+    - "can you analyze nodes by their accelerator (non-accelerator) types. Show the results in a nice table."
 - group: Getting Started
   items:
     - "Check recent activity in the cluster and highlight any issues."
