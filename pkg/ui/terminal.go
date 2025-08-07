@@ -254,9 +254,9 @@ func (u *TerminalUI) handleMessage(msg *api.Message) {
 		text = msg.Payload.(string)
 	case api.MessageTypeToolCallRequest:
 		styleOptions = append(styleOptions, foreground(colorGreen))
-		text = fmt.Sprintf("  Running: %s\n", msg.Payload.(string))
+		text = fmt.Sprintf("\nRunning: %s\n", msg.Payload.(string))
 	case api.MessageTypeToolCallResponse:
-		styleOptions = append(styleOptions, foreground(colorGreen))
+		styleOptions = append(styleOptions, renderMarkdown())
 		output, err := tools.ToolResultToMap(msg.Payload)
 
 		if err != nil {
