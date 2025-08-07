@@ -29,6 +29,7 @@ import (
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/agent"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/api"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/journal"
+	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/tools"
 	"github.com/charmbracelet/glamour"
 	"github.com/chzyer/readline"
 	"golang.org/x/term"
@@ -76,6 +77,8 @@ type TerminalUI struct {
 	// in such cases, stdin is already consumed and closed and reading input results in IO error.
 	// In such cases, we open /dev/tty and use it for taking input.
 	useTTYForInput bool
+	// noTruncateOutput disables truncation of tool output.
+	noTruncateOutput bool
 
 	agent *agent.Agent
 }
@@ -107,7 +110,7 @@ func getCustomTerminalWidth() int {
 	return 0
 }
 
-func NewTerminalUI(agent *agent.Agent, useTTYForInput bool, journal journal.Recorder) (*TerminalUI, error) {
+func NewTerminalUI(agent *agent.Agent, useTTYForInput bool, noTruncateOutput bool, journal journal.Recorder) (*TerminalUI, error) {
 	width := getCustomTerminalWidth()
 
 	options := []glamour.TermRendererOption{
@@ -131,6 +134,7 @@ func NewTerminalUI(agent *agent.Agent, useTTYForInput bool, journal journal.Reco
 		journal:          journal,
 		useTTYForInput:   useTTYForInput, // Store this flag
 		agent:            agent,
+		noTruncateOutput: noTruncateOutput,
 	}
 
 	return u, nil
@@ -253,11 +257,19 @@ func (u *TerminalUI) handleMessage(msg *api.Message) {
 		text = fmt.Sprintf("  Running: %s\n", msg.Payload.(string))
 	case api.MessageTypeToolCallResponse:
 		styleOptions = append(styleOptions, foreground(colorGreen))
-		output := formatToolCallResponse(msg.Payload)
-		if output == "" {
+		output, err := tools.ToolResultToMap(msg.Payload)
+
+		if err != nil {
+			klog.Errorf("Error converting tool result to map: %v", err)
+			u.agent.Input <- fmt.Errorf("error converting tool result to map: %w", err)
 			return
 		}
-		text = fmt.Sprintf("%s\n", output)
+
+		responseText := formatToolCallResponse(output)
+		if !u.noTruncateOutput {
+			responseText = truncateString(responseText, 1000)
+		}
+		text = fmt.Sprintf("%s\n", responseText)
 	case api.MessageTypeUserInputRequest:
 		text = msg.Payload.(string)
 		klog.Infof("Received user input request with payload: %q", text)
@@ -426,37 +438,23 @@ func (u *TerminalUI) ClearScreen() {
 	fmt.Print("\033[H\033[2J")
 }
 
-func formatToolCallResponse(payload any) string {
+func formatToolCallResponse(payload map[string]any) string {
 	if payload == nil {
 		return ""
 	}
 
-	// If payload is a JSON string try to unmarshal first
-	if s, ok := payload.(string); ok {
-		var m map[string]any
-		if err := json.Unmarshal([]byte(s), &m); err == nil {
-			return formatToolCallResponse(m)
-		}
-		return truncateString(s, 1000)
+	if v, ok := payload["content"]; ok {
+		return fmt.Sprint(v)
 	}
 
-	if m, ok := payload.(map[string]any); ok {
-		if stdout, ok := m["stdout"]; ok {
-			if outStr, ok := stdout.(string); ok {
-				return truncateString(outStr, 1000)
-			}
-		}
-		b, err := json.MarshalIndent(m, "", "  ")
-		if err == nil {
-			return truncateString(string(b), 1000)
-		}
-		return fmt.Sprint(m)
+	if v, ok := payload["stdout"]; ok {
+		return fmt.Sprint(v)
 	}
 
-	b, err := json.MarshalIndent(payload, "", "  ")
-	if err == nil {
-		return truncateString(string(b), 1000)
+	if b, err := json.MarshalIndent(payload, "", "  "); err == nil {
+		return string(b)
 	}
+
 	return fmt.Sprint(payload)
 }
 
