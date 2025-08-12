@@ -362,7 +362,6 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 						log.Error(nil, "Received unexpected input from channel", "userInput", userInput)
 						return
 					}
-					c.addMessage(api.MessageSourceUser, api.MessageTypeText, query.Query)
 					// we don't need the agentic loop for meta queries
 					// for ex. model, tools, etc.
 					answer, handled, err := c.handleMetaQuery(ctx, query.Query)
@@ -383,7 +382,17 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 						// we handled the meta query, so we don't need to run the agentic loop
 						c.setAgentState(api.AgentStateDone)
 						c.pendingFunctionCalls = []ToolCallAnalysis{}
-						c.addMessage(api.MessageSourceAgent, api.MessageTypeText, answer)
+						if query.Query != "clear" && query.Query != "reset" {
+							c.addMessage(api.MessageSourceAgent, api.MessageTypeText, answer)
+						} else {
+							c.Output <- &api.Message{
+								ID:        uuid.New().String(),
+								Source:    api.MessageSourceAgent,
+								Type:      api.MessageTypeText,
+								Payload:   answer,
+								Timestamp: time.Now(),
+							}
+						}
 						continue
 					}
 
