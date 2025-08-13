@@ -20,60 +20,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GoogleCloudPlatform/kubectl-ai/gollm"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/api"
-	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/sessions"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/tools"
 )
-
-type mockLLM struct{}
-
-func (mockLLM) Close() error { return nil }
-
-func (mockLLM) StartChat(systemPrompt, model string) gollm.Chat { return mockChat{} }
-
-func (mockLLM) GenerateCompletion(ctx context.Context, req *gollm.CompletionRequest) (gollm.CompletionResponse, error) {
-	return nil, nil
-}
-
-func (mockLLM) SetResponseSchema(schema *gollm.Schema) error { return nil }
-
-func (mockLLM) ListModels(ctx context.Context) ([]string, error) { return []string{"mock-model"}, nil }
-
-type mockChat struct{}
-
-func (mockChat) Initialize(messages []*api.Message) error {
-	return nil
-}
-
-func (mockChat) Send(ctx context.Context, contents ...any) (gollm.ChatResponse, error) {
-	return nil, nil
-}
-
-func (mockChat) SendStreaming(ctx context.Context, contents ...any) (gollm.ChatResponseIterator, error) {
-	return nil, nil
-}
-
-func (mockChat) SetFunctionDefinitions(functionDefinitions []*gollm.FunctionDefinition) error {
-	return nil
-}
-
-func (mockChat) IsRetryableError(error) bool { return false }
-
-func newTestAgent() *Agent {
-	chatStore := sessions.NewInMemoryChatStore()
-	chatStore.AddChatMessage(&api.Message{Source: api.MessageSourceUser, Payload: "previous message"})
-	return &Agent{
-		Input:            make(chan any, 1),
-		Output:           make(chan any, 10),
-		session:          &api.Session{AgentState: api.AgentStateIdle, ChatMessageStore: chatStore},
-		LLM:              mockLLM{},
-		llmChat:          mockChat{},
-		Model:            "test-model",
-		Tools:            tools.Default(),
-		ChatMessageStore: chatStore,
-	}
-}
 
 func TestRunHandlesMetaQueries(t *testing.T) {
 	testCases := []struct {
@@ -102,8 +51,9 @@ func TestRunHandlesMetaQueries(t *testing.T) {
 			query:                   "clear",
 			expectedResponseContain: "Cleared the conversation.",
 			checkSideEffect: func(t *testing.T, a *Agent) {
-				if len(a.session.ChatMessageStore.ChatMessages()) != 0 {
-					t.Errorf("expected chat messages to be cleared, but got %d messages", len(a.session.ChatMessageStore.ChatMessages()))
+				time.Sleep(100 * time.Millisecond)
+				if len(a.session.ChatMessageStore.ChatMessages()) != 1 {
+					t.Errorf("expected 1 chat message after clear, but got %d messages", len(a.session.ChatMessageStore.ChatMessages()))
 				}
 			},
 		},
@@ -112,8 +62,9 @@ func TestRunHandlesMetaQueries(t *testing.T) {
 			query:                   "reset",
 			expectedResponseContain: "Cleared the conversation.",
 			checkSideEffect: func(t *testing.T, a *Agent) {
-				if len(a.session.ChatMessageStore.ChatMessages()) != 0 {
-					t.Errorf("expected chat messages to be cleared, but got %d messages", len(a.session.ChatMessageStore.ChatMessages()))
+				time.Sleep(100 * time.Millisecond)
+				if len(a.session.ChatMessageStore.ChatMessages()) != 1 {
+					t.Errorf("expected 1 chat message after reset, but got %d messages", len(a.session.ChatMessageStore.ChatMessages()))
 				}
 			},
 		},
@@ -144,7 +95,8 @@ func TestRunHandlesMetaQueries(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
-			a := newTestAgent()
+			defaultTools := tools.Default()
+			a := newTestAgent(&mockChat{}, (&defaultTools).AllTools()...)
 
 			if err := a.Run(ctx, ""); err != nil {
 				t.Fatalf("Run returned error: %v", err)
@@ -206,5 +158,57 @@ func TestRunHandlesMetaQueries(t *testing.T) {
 				tc.checkSideEffect(t, a)
 			}
 		})
+	}
+}
+
+func TestRunHandlesEmptyQuery(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	defaultTools := tools.Default()
+	a := newTestAgent(&mockChat{}, (&defaultTools).AllTools()...)
+
+	if err := a.Run(ctx, ""); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	// Wait for the agent to prompt for input
+	timeout := time.After(time.Second)
+WaitForPrompt:
+	for {
+		select {
+		case <-timeout:
+			t.Fatal("did not receive prompt for input")
+		case msg := <-a.Output:
+			m := msg.(*api.Message)
+			if m.Type == api.MessageTypeUserInputRequest && m.Payload.(string) == ">>>" {
+				a.Input <- &api.UserInputResponse{Query: ""} // Send empty query
+				break WaitForPrompt
+			}
+		}
+	}
+
+	// Expect another prompt for input
+	responseTimeout := time.After(time.Second)
+	var gotNextPrompt bool
+WaitForNextPrompt:
+	for {
+		select {
+		case <-responseTimeout:
+			t.Fatal("timed out waiting for next prompt")
+		case msg, ok := <-a.Output:
+			if !ok {
+				break WaitForNextPrompt
+			}
+			m := msg.(*api.Message)
+			if m.Type == api.MessageTypeUserInputRequest && m.Payload.(string) == ">>>" {
+				gotNextPrompt = true
+				break WaitForNextPrompt
+			}
+		}
+	}
+
+	if !gotNextPrompt {
+		t.Error("did not receive next prompt after empty query")
 	}
 }

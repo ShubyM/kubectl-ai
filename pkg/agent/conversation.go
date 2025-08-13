@@ -476,6 +476,7 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 					log.Error(err, "error sending streaming LLM response")
 					c.setAgentState(api.AgentStateDone)
 					c.pendingFunctionCalls = []ToolCallAnalysis{}
+					c.addMessage(api.MessageSourceAgent, api.MessageTypeError, "Error: "+err.Error())
 					continue
 				}
 
