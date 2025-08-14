@@ -19,6 +19,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -268,5 +269,44 @@ func TestAgentRun_ToolCall_SkipPermission(t *testing.T) {
 
 	if !toolExecuted {
 		t.Error("Expected tool to be executed, but it was not")
+	}
+}
+
+func TestEmptyUserInput_DoesNotCallLLM(t *testing.T) {
+	t.Parallel()
+
+	var llmCalls int32
+	mock := &mockChat{
+		sendStreamingFunc: func(ctx context.Context, contents ...any) (gollm.ChatResponseIterator, error) {
+			atomic.AddInt32(&llmCalls, 1)
+			return newMockChatResponse(&mockTextPart{text: "ok"}), nil
+		},
+	}
+
+	a := newTestAgent(mock)
+	a.RunOnce = false // interactive loop
+
+	if err := a.Run(context.Background(), "seed"); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for atomic.LoadInt32(&llmCalls) < 1 {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for first LLM call")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	a.Input <- &api.UserInputResponse{Query: ""}
+
+	time.Sleep(150 * time.Millisecond)
+
+	if got := atomic.LoadInt32(&llmCalls); got != 1 {
+		t.Fatalf("expected no extra LLM call for empty input; got %d total calls", got)
+	}
+
+	if st := a.AgentState(); st != api.AgentStateDone {
+		t.Fatalf("expected AgentState to be Done, got %v", st)
 	}
 }
