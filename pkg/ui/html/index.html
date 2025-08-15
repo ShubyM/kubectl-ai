@@ -266,7 +266,7 @@
             const [input, setInput] = useState('');
             const [agentState, setAgentState] = useState('idle');
             const [isConnected, setIsConnected] = useState(false);
-            const [contextRemaining, setContextRemaining] = useState(null);
+            const [contextRemaining, setContextRemaining] = useState(100);
             const [expandedOutputs, setExpandedOutputs] = useState(new Set());
             const [isDarkMode, setIsDarkMode] = useState(() => {
                 // Check for saved preference first
@@ -362,7 +362,7 @@
                             }
                         }
                         if (ctx !== null) {
-                            setContextRemaining(ctx);
+                            setContextRemaining((prev) => prev === null ? ctx : Math.min(prev, ctx));
                         }
                         setMessages(filtered);
                         setAgentState(data.agentState || 'idle');
@@ -770,14 +770,12 @@
                                         {isConnected ? 'Connected' : 'Connecting...'}
                                     </span>
                                 </div>
-                                {contextRemaining !== null && (
-                                    <div className="flex items-center space-x-2 w-40">
-                                        <div className={`${isDarkMode ? 'bg-gray-700' : 'bg-gray-200'} h-2 rounded-full w-full`}>
-                                            <div className={`${getContextBarColor()} h-2 rounded-full`} style={{ width: `${contextRemaining}%` }}></div>
-                                        </div>
-                                        <span className={`text-xs font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>{contextRemaining.toFixed(1)}%</span>
+                                <div className="flex items-center space-x-2 w-40">
+                                    <div className={`${isDarkMode ? 'bg-gray-700' : 'bg-gray-200'} h-2 rounded-full w-full`}>
+                                        <div className={`${getContextBarColor()} h-2 rounded-full`} style={{ width: `${contextRemaining}%` }}></div>
                                     </div>
-                                )}
+                                    <span className={`text-xs font-medium ${isDarkMode ? 'text-gray-300' : 'text-gray-600'}`}>{contextRemaining.toFixed(1)}%</span>
+                                </div>
                                 {/* Dark Mode Toggle */}
                                 <button
                                     onClick={toggleDarkMode}
