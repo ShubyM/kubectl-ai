@@ -132,10 +132,10 @@ func TestAgentRun_LLMTextResponse(t *testing.T) {
 		}
 	}
 
-	// Agent should be exited after one run
-	time.Sleep(100 * time.Millisecond)
-	if a.AgentState() != api.AgentStateExited {
-		t.Errorf("Expected agent state to be Exited, but got %s", a.AgentState())
+	for range a.Output {
+		if a.AgentState() != api.AgentStateExited {
+			t.Errorf("Expected agent state to be Exited, but got %s", a.AgentState())
+		}
 	}
 }
 
@@ -172,9 +172,10 @@ func TestAgentRun_LLMErrorResponse(t *testing.T) {
 		}
 	}
 
-	time.Sleep(100 * time.Millisecond)
-	if a.AgentState() != api.AgentStateExited {
-		t.Errorf("Expected agent state to be Exited, but got %s", a.AgentState())
+	for range a.Output {
+		if a.AgentState() != api.AgentStateExited {
+			t.Errorf("Expected agent state to be Exited, but got %s", a.AgentState())
+		}
 	}
 }
 
