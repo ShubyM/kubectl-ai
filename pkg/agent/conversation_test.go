@@ -20,12 +20,11 @@ import (
 	"strings"
 	"testing"
 
-	"go.uber.org/mock/gomock"
-
+	"github.com/GoogleCloudPlatform/kubectl-ai/gollm"
 	"github.com/GoogleCloudPlatform/kubectl-ai/internal/mocks"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/api"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/sessions"
-	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/tools"
+	"go.uber.org/mock/gomock"
 )
 
 func TestHandleMetaQuery(t *testing.T) {
@@ -39,20 +38,73 @@ func TestHandleMetaQuery(t *testing.T) {
 		expect       string
 	}{
 		{
-			name:   "clear",
+			name:   "clear (shows store before/after with mocked model + tool outputs)",
 			query:  "clear",
 			expect: "Cleared the conversation.",
 			expectations: func(t *testing.T) *Agent {
 				ctrl := gomock.NewController(t)
 				t.Cleanup(ctrl.Finish)
-				store := mocks.NewMockChatMessageStore(ctrl)
+
+				store := sessions.NewInMemoryChatStore()
+
 				chat := mocks.NewMockChat(ctrl)
-				store.EXPECT().ClearChatMessages().Return(nil)
-				store.EXPECT().ChatMessages().Return([]*api.Message{})
-				chat.EXPECT().Initialize([]*api.Message{})
+				chat.EXPECT().Initialize([]*api.Message{}).Times(1)
+
+				mt := mocks.NewMockTool(ctrl)
+				mt.EXPECT().Name().Return("mock namespace tool").AnyTimes()
+				mt.EXPECT().FunctionDefinition().Return(&gollm.FunctionDefinition{
+					Name:        "mock namespace tool",
+					Description: "Inspect current Kubernetes namespace",
+				}).AnyTimes()
+
+				const toolResult = `{"namespace":"test-namespace"}`
+
+				mt.EXPECT().Run(gomock.Any(), gomock.Any()).
+					Return(toolResult, nil).Times(1)
+
+				const modelText = "The current namespace is test-namespace."
+
+				// user message
+				_ = store.AddChatMessage(&api.Message{
+					ID:      "u1",
+					Source:  api.MessageSourceUser,
+					Type:    api.MessageTypeText,
+					Payload: "What's my current namespace?",
+				})
+
+				// model response
+				_ = store.AddChatMessage(&api.Message{
+					ID:      "a1",
+					Source:  api.MessageSourceAgent,
+					Type:    api.MessageTypeText,
+					Payload: modelText,
+				})
+
+				// tool call result
+				if out, err := mt.Run(ctx, map[string]any{}); err == nil {
+					_ = store.AddChatMessage(&api.Message{
+						ID:      "t1",
+						Source:  api.MessageSourceAgent,
+						Type:    api.MessageTypeText,
+						Payload: out,
+					})
+				} else {
+					t.Fatalf("mock tool run failed: %v", err)
+				}
+
+				if got := len(store.ChatMessages()); got != 3 {
+					t.Fatalf("precondition: expected 3 messages before clear, got %d", got)
+				}
+
 				a := &Agent{llmChat: chat}
 				a.session = &api.Session{ChatMessageStore: store}
+
 				return a
+			},
+			verify: func(t *testing.T, a *Agent, _ string) {
+				if got := len(a.session.ChatMessageStore.ChatMessages()); got != 0 {
+					t.Fatalf("expected store to be empty after clear, got %d", got)
+				}
 			},
 		},
 		{
@@ -89,6 +141,7 @@ func TestHandleMetaQuery(t *testing.T) {
 				t.Cleanup(ctrl.Finish)
 				llm := mocks.NewMockClient(ctrl)
 				llm.EXPECT().ListModels(ctx).Return([]string{"a", "b"}, nil)
+
 				a := &Agent{LLM: llm}
 				a.session = &api.Session{}
 				return a
@@ -99,12 +152,25 @@ func TestHandleMetaQuery(t *testing.T) {
 			query:  "tools",
 			expect: "Available tools:",
 			expectations: func(t *testing.T) *Agent {
-				a := &Agent{Tools: tools.Default()}
+				ctrl := gomock.NewController(t)
+				t.Cleanup(ctrl.Finish)
+
+				mt := mocks.NewMockTool(ctrl)
+				mt.EXPECT().Name().Return("mocktool").AnyTimes()
+				mt.EXPECT().FunctionDefinition().Return(&gollm.FunctionDefinition{
+					Name:        "mocktool",
+					Description: "Mocked tool for tests",
+				}).AnyTimes()
+
+				a := &Agent{}
+
+				a.Tools.Init()
+				a.Tools.RegisterTool(mt)
 				a.session = &api.Session{}
 				return a
 			},
 			verify: func(t *testing.T, _ *Agent, answer string) {
-				if !strings.Contains(answer, "kubectl") {
+				if !strings.Contains(answer, "mocktool") {
 					t.Fatalf("expected kubectl tool in output: %q", answer)
 				}
 			},
@@ -118,6 +184,7 @@ func TestHandleMetaQuery(t *testing.T) {
 				t.Cleanup(func() { os.Setenv("HOME", oldHome) })
 				home := t.TempDir()
 				os.Setenv("HOME", home)
+
 				manager, err := sessions.NewSessionManager()
 				if err != nil {
 					t.Fatalf("creating session manager: %v", err)
@@ -145,18 +212,18 @@ func TestHandleMetaQuery(t *testing.T) {
 				t.Cleanup(func() { os.Setenv("HOME", oldHome) })
 				home := t.TempDir()
 				os.Setenv("HOME", home)
+
 				manager, err := sessions.NewSessionManager()
 				if err != nil {
 					t.Fatalf("creating session manager: %v", err)
 				}
-				_, err = manager.NewSession(sessions.Metadata{ProviderID: "p1", ModelID: "m1"})
-				if err != nil {
+				if _, err := manager.NewSession(sessions.Metadata{ProviderID: "p1", ModelID: "m1"}); err != nil {
 					t.Fatalf("creating session: %v", err)
 				}
-				_, err = manager.NewSession(sessions.Metadata{ProviderID: "p2", ModelID: "m2"})
-				if err != nil {
+				if _, err := manager.NewSession(sessions.Metadata{ProviderID: "p2", ModelID: "m2"}); err != nil {
 					t.Fatalf("creating session: %v", err)
 				}
+
 				a := &Agent{}
 				a.session = &api.Session{ChatMessageStore: sessions.NewInMemoryChatStore()}
 				return a
