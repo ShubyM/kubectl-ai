@@ -24,6 +24,10 @@ type Session struct {
 	AgentState   AgentState
 	CreatedAt    time.Time
 	LastModified time.Time
+
+	// ContextPercentRemaining indicates the percentage of the model's context window that is still available.
+	ContextPercentRemaining float64
+
 	// MCP status information
 	MCPStatus *MCPStatus
 	// ChatMessageStore is an interface that allows the session to store and retrieve chat messages.
@@ -52,7 +56,6 @@ const (
 	MessageTypeUserInputResponse  MessageType = "user-input-response"
 	MessageTypeUserChoiceRequest  MessageType = "user-choice-request"
 	MessageTypeUserChoiceResponse MessageType = "user-choice-response"
-	MessageTypeUsageMetadata      MessageType = "usage-metadata"
 )
 
 type Message struct {
@@ -61,10 +64,6 @@ type Message struct {
 	Type      MessageType
 	Payload   any
 	Timestamp time.Time
-}
-
-type UsageMetadata struct {
-	ContextPercentRemaining float64 `json:"contextPercentRemaining,omitempty"`
 }
 
 type MessageSource string

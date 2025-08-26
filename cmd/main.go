@@ -402,8 +402,9 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 		if opt.NewSession {
 			// Create a new session
 			meta := sessions.Metadata{
-				ProviderID: opt.ProviderID,
-				ModelID:    opt.ModelID,
+				ProviderID:              opt.ProviderID,
+				ModelID:                 opt.ModelID,
+				ContextPercentRemaining: 100.0, // New session starts with 100% context remaining
 			}
 			chatStore, err = sessionManager.NewSession(meta)
 			if err != nil {
@@ -422,8 +423,9 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 				if chatStore == nil {
 					// No sessions exist, create a new one
 					meta := sessions.Metadata{
-						ProviderID: opt.ProviderID,
-						ModelID:    opt.ModelID,
+						ProviderID:              opt.ProviderID,
+						ModelID:                 opt.ModelID,
+						ContextPercentRemaining: 100.0, // New session starts with 100% context remaining
 					}
 					chatStore, err = sessionManager.NewSession(meta)
 					if err != nil {

@@ -155,6 +155,21 @@ func (c *Agent) addMessage(source api.MessageSource, messageType api.MessageType
 	return message
 }
 
+func (c *Agent) setContextPercentRemaining(pct float64) {
+	c.sessionMu.Lock()
+	defer c.sessionMu.Unlock()
+	c.session.ContextPercentRemaining = pct
+	c.session.LastModified = time.Now()
+
+	if session, ok := c.session.ChatMessageStore.(*sessions.Session); ok {
+		if meta, err := session.LoadMetadata(); err == nil {
+			meta.ContextPercentRemaining = pct
+			meta.LastAccessed = c.session.LastModified
+			_ = session.SaveMetadata(meta)
+		}
+	}
+}
+
 // setAgentState updates the agent state and ensures LastModified is updated
 func (c *Agent) setAgentState(newState api.AgentState) {
 	c.sessionMu.Lock()
@@ -207,10 +222,13 @@ func (s *Agent) Init(ctx context.Context) error {
 		s.session.ID = session.ID
 		s.session.CreatedAt = metadata.CreatedAt
 		s.session.LastModified = metadata.LastAccessed
+		s.session.ContextPercentRemaining = metadata.ContextPercentRemaining
+
 	} else {
 		s.session.ID = uuid.New().String()
 		s.session.CreatedAt = time.Now()
 		s.session.LastModified = time.Now()
+		s.session.ContextPercentRemaining = 100
 	}
 
 	// Create a temporary working directory
@@ -553,8 +571,7 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 				}
 
 				if pct, ok := gollm.ContextPercentRemaining(c.Model, usageMetadata); ok {
-					// c.addMessage(api.MessageSourceAgent, api.MessageTypeText, fmt.Sprintf("Context remaining: %.1f%%", pct))
-					c.addMessage(api.MessageSourceAgent, api.MessageTypeUsageMetadata, api.UsageMetadata{ContextPercentRemaining: pct})
+					c.setContextPercentRemaining(pct)
 				}
 
 				// If no function calls to be made, we're done

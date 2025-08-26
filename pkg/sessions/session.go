@@ -33,10 +33,11 @@ const (
 
 // Metadata contains metadata about a session
 type Metadata struct {
-	ProviderID   string    `json:"providerID"`
-	ModelID      string    `json:"modelID"`
-	CreatedAt    time.Time `json:"createdAt"`
-	LastAccessed time.Time `json:"lastAccessed"`
+	ProviderID              string    `json:"providerID"`
+	ModelID                 string    `json:"modelID"`
+	CreatedAt               time.Time `json:"createdAt"`
+	LastAccessed            time.Time `json:"lastAccessed"`
+	ContextPercentRemaining float64   `json:"contextPercentRemaining"`
 }
 
 // Session represents a single chat session.

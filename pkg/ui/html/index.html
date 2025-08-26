@@ -266,7 +266,10 @@
             const [input, setInput] = useState('');
             const [agentState, setAgentState] = useState('idle');
             const [isConnected, setIsConnected] = useState(false);
-            const [contextRemaining, setContextRemaining] = useState(100);
+            const [contextRemaining, setContextRemaining] = useState(() => {
+                const saved = localStorage.getItem('kubectl-ai-context');
+                return saved ? parseFloat(saved) : 100;
+            });
             const [expandedOutputs, setExpandedOutputs] = useState(new Set());
             const [isDarkMode, setIsDarkMode] = useState(() => {
                 // Check for saved preference first
@@ -351,21 +354,12 @@
                 eventSource.onmessage = (event) => {
                     try {
                         const data = JSON.parse(event.data);
-                        const incoming = data.messages || [];
-                        let ctx = null;
-                        const filtered = [];
-                        for (const m of incoming) {
-                            if (m.Type === 'usage-metadata' && m.Payload && typeof m.Payload.contextPercentRemaining === 'number') {
-                                ctx = m.Payload.contextPercentRemaining;
-                            } else {
-                                filtered.push(m);
-                            }
-                        }
-                        if (ctx !== null) {
-                            setContextRemaining((prev) => prev === null ? ctx : Math.min(prev, ctx));
-                        }
-                        setMessages(filtered);
+                        setMessages(data.messages || []);
                         setAgentState(data.agentState || 'idle');
+                        if (typeof data.contextRemaining === 'number') {
+                            setContextRemaining(data.contextRemaining);
+                            localStorage.setItem('kubectl-ai-context', String(data.contextRemaining));
+                        }
                     } catch (error) {
                         console.error('Error parsing server data:', error);
                     }
