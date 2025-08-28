@@ -27,6 +27,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GoogleCloudPlatform/kubectl-ai/gollm"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/agent"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/api"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/journal"
@@ -285,10 +286,15 @@ func (u *HTMLUserInterface) getCurrentStateJSON() ([]byte, error) {
 		messages = append(messages, message)
 	}
 
+	remaining := 0.0
+	if pct, ok := gollm.ContextPercentRemaining(u.agent.Model, session.TokensConsumed); ok {
+		remaining = pct
+	}
+
 	data := map[string]interface{}{
 		"messages":         messages,
 		"agentState":       session.AgentState,
-		"contextRemaining": session.ContextPercentRemaining,
+		"contextRemaining": remaining,
 	}
 	return json.Marshal(data)
 }

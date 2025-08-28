@@ -26,7 +26,7 @@ type Session struct {
 	LastModified time.Time
 
 	// ContextPercentRemaining indicates the percentage of the model's context window that is still available.
-	ContextPercentRemaining float64
+	TokensConsumed int64
 
 	// MCP status information
 	MCPStatus *MCPStatus

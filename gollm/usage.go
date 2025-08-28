@@ -53,7 +53,7 @@ var modelContextLimits = map[string]int64{
 // totalTokens extracts the total token count from provider specific usage
 // metadata.  It returns ok=false if the usage type is unrecognized or no token
 // information is available.
-func totalTokens(usage any) (tokens int64, ok bool) {
+func TotalTokens(usage any) (tokens int64, ok bool) {
 	switch u := usage.(type) {
 	case openai.CompletionUsage:
 		return u.TotalTokens, true
@@ -74,22 +74,16 @@ func totalTokens(usage any) (tokens int64, ok bool) {
 // ContextPercentRemaining calculates the percentage of context window
 // remaining for the given model using provider specific usage metadata.  The
 // second return value indicates whether the percentage could be calculated.
-func ContextPercentRemaining(model string, usage any) (float64, bool) {
-	total, ok := totalTokens(usage)
-
-	if !ok {
-		return 0, false
-	}
-
+func ContextPercentRemaining(model string, consumed int64) (float64, bool) {
 	limit, ok := modelContextLimits[model]
 	if !ok || limit == 0 {
 		return 0, false
 	}
 
-	if total >= limit {
+	if consumed >= limit {
 		return 0, true
 	}
 
-	remaining := float64(limit-total) / float64(limit) * 100
+	remaining := float64(limit-consumed) / float64(limit) * 100
 	return remaining, true
 }
