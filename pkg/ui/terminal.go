@@ -77,8 +77,8 @@ type TerminalUI struct {
 	// in such cases, stdin is already consumed and closed and reading input results in IO error.
 	// In such cases, we open /dev/tty and use it for taking input.
 	useTTYForInput bool
-	// noTruncateOutput disables truncation of tool output.
-	noTruncateOutput bool
+	// showToolOutput disables truncation of tool output.
+	showToolOutput bool
 
 	agent *agent.Agent
 }
@@ -110,7 +110,7 @@ func getCustomTerminalWidth() int {
 	return 0
 }
 
-func NewTerminalUI(agent *agent.Agent, useTTYForInput bool, noTruncateOutput bool, journal journal.Recorder) (*TerminalUI, error) {
+func NewTerminalUI(agent *agent.Agent, useTTYForInput bool, showToolOutput bool, journal journal.Recorder) (*TerminalUI, error) {
 	width := getCustomTerminalWidth()
 
 	options := []glamour.TermRendererOption{
@@ -134,7 +134,7 @@ func NewTerminalUI(agent *agent.Agent, useTTYForInput bool, noTruncateOutput boo
 		journal:          journal,
 		useTTYForInput:   useTTYForInput, // Store this flag
 		agent:            agent,
-		noTruncateOutput: noTruncateOutput,
+		showToolOutput:   showToolOutput,
 	}
 
 	return u, nil
@@ -254,8 +254,11 @@ func (u *TerminalUI) handleMessage(msg *api.Message) {
 		text = msg.Payload.(string)
 	case api.MessageTypeToolCallRequest:
 		styleOptions = append(styleOptions, foreground(colorGreen))
-		text = fmt.Sprintf("\nRunning: %s\n", msg.Payload.(string))
+		text = fmt.Sprintf("\n  Running: %s\n", msg.Payload.(string))
 	case api.MessageTypeToolCallResponse:
+		if !u.showToolOutput {
+			return
+		}
 		styleOptions = append(styleOptions, renderMarkdown())
 		output, err := tools.ToolResultToMap(msg.Payload)
 
@@ -266,10 +269,8 @@ func (u *TerminalUI) handleMessage(msg *api.Message) {
 		}
 
 		responseText := formatToolCallResponse(output)
-		if !u.noTruncateOutput {
-			responseText = truncateString(responseText, 1000)
-		}
 		text = fmt.Sprintf("%s\n", responseText)
+
 	case api.MessageTypeUserInputRequest:
 		text = msg.Payload.(string)
 		klog.Infof("Received user input request with payload: %q", text)
@@ -281,12 +282,20 @@ func (u *TerminalUI) handleMessage(msg *api.Message) {
 				klog.Errorf("Failed to get TTY reader: %v", err)
 				return
 			}
-			fmt.Print("\n>>> ") // Print prompt manually
-			query, err = tReader.ReadString('\n')
-			if err != nil {
-				klog.Errorf("Error reading from TTY: %v", err)
-				u.agent.Input <- fmt.Errorf("error reading from TTY: %w", err)
-				return
+			// keep reading input until we get a non-empty query
+			for {
+				var err error
+				fmt.Print("\n>>> ") // Print prompt manually
+				query, err = tReader.ReadString('\n')
+				if err != nil {
+					klog.Errorf("Error reading from TTY: %v", err)
+					u.agent.Input <- fmt.Errorf("error reading from TTY: %w", err)
+					return
+				}
+				if strings.TrimSpace(query) == "" {
+					continue
+				}
+				break
 			}
 			klog.Infof("Sending TTY input to agent: %q", query)
 			u.agent.Input <- &api.UserInputResponse{Query: query}
@@ -297,21 +306,28 @@ func (u *TerminalUI) handleMessage(msg *api.Message) {
 				u.agent.Input <- fmt.Errorf("error creating readline instance: %w", err)
 				return
 			}
-			rlInstance.SetPrompt(">>> ") // Ensure correct prompt
-			query, err = rlInstance.Readline()
-			if err != nil {
-				klog.Infof("Readline error: %v", err)
-				switch err {
-				case readline.ErrInterrupt: // Handle Ctrl+C
-					u.agent.Input <- io.EOF
-				case io.EOF: // Handle Ctrl+D
-					u.agent.Input <- io.EOF
-				default:
-					u.agent.Input <- err
+			// keep reading input until we get a non-empty query
+			for {
+				rlInstance.SetPrompt(">>> ") // Ensure correct prompt
+				query, err = rlInstance.Readline()
+				if err != nil {
+					klog.Infof("Readline error: %v", err)
+					switch err {
+					case readline.ErrInterrupt: // Handle Ctrl+C
+						u.agent.Input <- io.EOF
+					case io.EOF: // Handle Ctrl+D
+						u.agent.Input <- io.EOF
+					default:
+						u.agent.Input <- err
+					}
+					break
 				}
-			} else {
+				if strings.TrimSpace(query) == "" {
+					continue
+				}
 				klog.Infof("Sending readline input to agent: %q", query)
 				u.agent.Input <- &api.UserInputResponse{Query: query}
+				break
 			}
 		}
 		if query == "clear" || query == "reset" {
@@ -450,11 +466,4 @@ func formatToolCallResponse(payload map[string]any) string {
 	}
 
 	return fmt.Sprint(payload)
-}
-
-func truncateString(s string, limit int) string {
-	if len(s) <= limit {
-		return s
-	}
-	return s[:limit] + "..."
 }

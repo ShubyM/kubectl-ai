@@ -2,7 +2,9 @@
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/GoogleCloudPlatform/kubectl-ai)](https://goreportcard.com/report/github.com/GoogleCloudPlatform/kubectl-ai)
 ![GitHub License](https://img.shields.io/github/license/GoogleCloudPlatform/kubectl-ai)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/GoogleCloudPlatform/kubectl-ai)
 [![GitHub stars](https://img.shields.io/github/stars/GoogleCloudPlatform/kubectl-ai.svg)](https://github.com/GoogleCloudPlatform/kubectl-ai/stargazers)
+
 
 `kubectl-ai` acts as an intelligent interface, translating user intent into
 precise Kubernetes operations, making Kubernetes management more accessible and
@@ -268,7 +270,7 @@ removeWorkdir: false             # Remove temporary working directory after exec
 kubeconfig: "~/.kube/config"      # Path to kubeconfig file
 
 # UI configuration
-userInterface: "terminal"         # UI mode: "terminal" or "html"
+uiType: "terminal"                # UI mode: "terminal" or "web"
 uiListenAddress: "localhost:8888" # Address for HTML UI server
 
 # Prompt configuration
@@ -297,38 +299,11 @@ You can also extend its capabilities by defining your own custom tools. By defau
 
 To specify tools configuration files or directories containing tools configuration files, use:
 
-```shell
-kubectl-ai --custom-tools-config=YOUR_CONFIG
+```sh
+./kubectl-ai --custom-tools-config=<path-to-tools-directory> "your prompt here"
 ```
 
-You can include multiple tools in a single configuration file, or a directory with multiple configuration files, each dedicated to a single or multiple tools.
-Define your custom tools using the following schema:
-
-```yaml
-- name: tool_name
-  description: "A clear description that helps the LLM understand when to use this tool."
-  command: "your_command" # For example: 'gcloud' or 'gcloud container clusters'
-  command_desc: "Detailed information for the LLM, including command syntax and usage examples."
-```
-
-A custom tool definition for `helm` could look like the following example:
-
-```yaml
-- name: helm
-  description: "Helm is the Kubernetes package manager and deployment tool. Use it to define, install, upgrade, and roll back applications packaged as Helm charts in a Kubernetes cluster."
-  command: "helm"
-  command_desc: |
-    Helm command-line interface, with the following core subcommands and usage patterns:    
-    - helm install <release-name> <chart> [flags]  
-      Install a chart into the cluster.      
-    - helm upgrade <release-name> <chart> [flags]  
-      Upgrade an existing release to a new chart version or configuration.      
-    - helm list [flags]  
-      List all releases in one or all namespaces.      
-    - helm uninstall <release-name> [flags]  
-      Uninstall a release and clean up associated resources.  
-    Use `helm --help` or `helm <subcommand> --help` to see full syntax, available flags, and examples for each command.
-```
+For further details on how to configure your own tools, [go here](docs/tools.md).
 
 ## Docker Quick Start 
 This project provides a Docker image that gives you a standalone environment for running kubectl-ai, including against a GKE cluster.
@@ -469,10 +444,10 @@ Comprehensive evaluation on identical 10-task Kubernetes benchmark with proper C
 
 | Model | Success | Fail | Success Rate |
 |-------|---------|------|--------------|
-| **AWS Bedrock Claude 3.7 Sonnet** | **10** | **0** | **100%** |
-| **AWS Bedrock Claude Sonnet 4** | **9** | **1** | **90%** |
 | gemini-2.5-flash-preview-04-17 | 10 | 0 | 100% |
 | gemini-2.5-pro-preview-03-25 | 10 | 0 | 100% |
+| AWS Bedrock Claude 3.7 Sonnet | 10 | 0 | 100% |
+| AWS Bedrock Claude Sonnet 4 | 10 | 0 | 100% |
 | gemma-3-27b-it | 8 | 2 | 80% |
 
 **Test Environment**: Kind cluster v1.27.3 with Calico CNI (full NetworkPolicy support)  

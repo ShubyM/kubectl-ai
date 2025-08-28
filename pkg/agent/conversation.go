@@ -76,6 +76,7 @@ type Agent struct {
 	// to be combined with PromptTemplateFile
 	ExtraPromptPaths []string
 	Model            string
+	Provider         string
 
 	RemoveWorkDir bool
 
@@ -379,6 +380,10 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 					if !ok {
 						log.Error(nil, "Received unexpected input from channel", "userInput", userInput)
 						return
+					}
+					if strings.TrimSpace(query.Query) == "" {
+						log.Info("No query provided, skipping agentic loop")
+						continue
 					}
 					c.addMessage(api.MessageSourceUser, api.MessageTypeText, query.Query)
 					// we don't need the agentic loop for meta queries
@@ -726,38 +731,149 @@ func (c *Agent) handleMetaQuery(ctx context.Context, query string) (answer strin
 		}
 		return "Session not found (session persistence not enabled)", true, nil
 
+	case "save-session":
+		savedSessionID, err := c.SaveSession()
+		if err != nil {
+			return "", false, fmt.Errorf("failed to save session: %w", err)
+		}
+		return "Saved session as " + savedSessionID, true, nil
+
 	case "sessions":
 		manager, err := sessions.NewSessionManager()
 		if err != nil {
 			return "", false, fmt.Errorf("failed to create session manager: %w", err)
 		}
+
 		sessionList, err := manager.ListSessions()
 		if err != nil {
 			return "", false, fmt.Errorf("failed to list sessions: %w", err)
 		}
 		if len(sessionList) == 0 {
-			return "No sessions found", true, nil
+			return "No sessions found.", true, nil
 		}
-		availableSessions := "Available sessions:\n\n"
+
+		// Add ```text so markdown doesn't wreck the format
+		availableSessions := "```text"
+		availableSessions += "Available sessions:\n\n"
+		availableSessions += "ID\t\t\tCreated\t\t\tLast Accessed\t\tModel\t\tProvider\n"
+		availableSessions += "--\t\t\t-------\t\t\t-------------\t\t-----\t\t--------\n"
+
 		for _, session := range sessionList {
 			metadata, err := session.LoadMetadata()
 			if err != nil {
-				fmt.Printf("%s\t\t<error loading metadata>\n", session.ID)
+				availableSessions += fmt.Sprintf("%s\t\t<error loading metadata>\n", session.ID)
 				continue
 			}
 
-			availableSessions += fmt.Sprintf("ID: %s\nCreated: %s\nLast Accessed: %s\nModel: %s\nProvider: %s\n\n",
+			availableSessions += fmt.Sprintf("%s\t%s\t%s\t%s\t%s\n",
 				session.ID,
-				metadata.CreatedAt.Format("2006-01-02 15:04:05"),
-				metadata.LastAccessed.Format("2006-01-02 15:04:05"),
+				metadata.CreatedAt.Format("2006-01-02 15:04"),
+				metadata.LastAccessed.Format("2006-01-02 15:04"),
 				metadata.ModelID,
 				metadata.ProviderID)
 		}
-
+		// close the ```text box
+		availableSessions += "```"
 		return availableSessions, true, nil
 	}
 
+	if strings.HasPrefix(query, "resume-session") {
+		parts := strings.Split(query, " ")
+		if len(parts) != 2 {
+			return "Invalid command. Usage: resume-session <session_id>", true, nil
+		}
+		sessionID := parts[1]
+		if err := c.loadSession(sessionID); err != nil {
+			return "", false, err
+		}
+		return fmt.Sprintf("Resumed session %s.", sessionID), true, nil
+	}
+
 	return "", false, nil
+}
+
+func (c *Agent) SaveSession() (string, error) {
+	c.sessionMu.Lock()
+	defer c.sessionMu.Unlock()
+
+	manager, err := sessions.NewSessionManager()
+	if err != nil {
+		return "", fmt.Errorf("failed to create session manager: %w", err)
+	}
+	foundSession, _ := manager.FindSessionByID(c.session.ID)
+	if foundSession != nil {
+		return foundSession.ID, nil
+	}
+	metadata := sessions.Metadata{
+		CreatedAt:    c.session.CreatedAt,
+		LastAccessed: time.Now(),
+		ModelID:      c.Model,
+		ProviderID:   c.Provider,
+	}
+	newSession, err := manager.NewSession(metadata)
+	if err != nil {
+		return "", fmt.Errorf("failed to create new session: %w", err)
+	}
+
+	messages := c.ChatMessageStore.ChatMessages()
+	if err := newSession.SetChatMessages(messages); err != nil {
+		return "", fmt.Errorf("failed to save chat messages to new session: %w", err)
+	}
+
+	c.ChatMessageStore = newSession
+	c.session.ChatMessageStore = newSession
+	c.llmChat.Initialize(c.ChatMessageStore.ChatMessages())
+
+	return newSession.ID, nil
+}
+
+// loadSession loads a session by ID (or latest), updates the agent's state, and re-initializes the chat.
+func (c *Agent) loadSession(sessionID string) error {
+	manager, err := sessions.NewSessionManager()
+	if err != nil {
+		return fmt.Errorf("failed to create session manager: %w", err)
+	}
+
+	var session *sessions.Session
+	if sessionID == "" || sessionID == "latest" {
+		s, err := manager.GetLatestSession()
+		if err != nil {
+			return fmt.Errorf("failed to get latest session: %w", err)
+		}
+		if s == nil {
+			// This can happen if GetLatestSession returns nil, nil (no sessions exist)
+			return fmt.Errorf("no sessions found to resume")
+		}
+		session = s
+	} else {
+		s, err := manager.FindSessionByID(sessionID)
+		if err != nil {
+			return fmt.Errorf("failed to get session %q: %w", sessionID, err)
+		}
+		session = s
+	}
+
+	c.sessionMu.Lock()
+	defer c.sessionMu.Unlock()
+
+	c.ChatMessageStore = session
+	c.session.ChatMessageStore = session
+	c.session.Messages = session.ChatMessages()
+	metadata, err := session.LoadMetadata()
+	if err != nil {
+		return fmt.Errorf("failed to load session metadata: %w", err)
+	}
+	c.session.ID = session.ID
+	c.session.CreatedAt = metadata.CreatedAt
+	c.session.LastModified = metadata.LastAccessed
+
+	if c.llmChat != nil {
+		if err := c.llmChat.Initialize(c.session.ChatMessageStore.ChatMessages()); err != nil {
+			return fmt.Errorf("failed to re-initialize chat with new session: %w", err)
+		}
+	}
+
+	return nil
 }
 
 func (c *Agent) listModels(ctx context.Context) ([]string, error) {
