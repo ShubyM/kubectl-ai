@@ -20,7 +20,17 @@ set -o pipefail
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd ${REPO_ROOT}
 
-echo "Installing mockgen..."
-go install go.uber.org/mock/mockgen@latest
+if ! command -v mockgen &> /dev/null; then
+  echo "mockgen not found, installing..."
+  go install go.uber.org/mock/mockgen@latest
+fi
 
-make verify-mocks
+# We run generate to see if it creates any diffs.
+go generate ./internal/mocks
+
+if ! git diff --quiet --exit-code -- internal/mocks; then
+  echo "Mocks are stale. Commit the changes to the generated files."
+  exit 1
+fi
+
+echo "Mocks are up to date."
