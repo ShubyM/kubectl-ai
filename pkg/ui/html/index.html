@@ -423,6 +423,14 @@
                 }
             };
 
+            const handleStop = async () => {
+                try {
+                    await fetch('/cancel', { method: 'POST' });
+                } catch (error) {
+                    console.error('Error cancelling request:', error);
+                }
+            };
+
             const handleSubmit = (e) => {
                 e.preventDefault();
                 if (isWaitingForChoice) {
@@ -860,13 +868,23 @@
                                         </div>
                                     )}
                                 </div>
-                                <button
-                                    type="submit"
-                                    disabled={!canSendMessage || !input.trim()}
-                                    className="px-6 py-3 bg-gradient-to-r from-brand-500 to-brand-600 text-white rounded-xl hover:from-brand-600 hover:to-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 font-medium shadow-sm self-end"
-                                >
-                                    Send
-                                </button>
+                                {agentState === 'running' ? (
+                                    <button
+                                        type="button"
+                                        onClick={handleStop}
+                                        className="px-6 py-3 bg-red-600 text-white rounded-xl hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 transition-all duration-200 font-medium shadow-sm self-end"
+                                    >
+                                        Stop
+                                    </button>
+                                ) : (
+                                    <button
+                                        type="submit"
+                                        disabled={!canSendMessage || !input.trim()}
+                                        className="px-6 py-3 bg-gradient-to-r from-brand-500 to-brand-600 text-white rounded-xl hover:from-brand-600 hover:to-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 font-medium shadow-sm self-end"
+                                    >
+                                        Send
+                                    </button>
+                                )}
                             </form>
                             <div className={`flex items-center justify-center mt-3 text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
                                 <span>💡 Try: "scale nginx to 3 replicas" or "show me pod status"</span>

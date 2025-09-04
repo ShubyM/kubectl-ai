@@ -22,9 +22,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/agent"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/api"
@@ -143,6 +145,26 @@ func NewTerminalUI(agent *agent.Agent, useTTYForInput bool, showToolOutput bool,
 func (u *TerminalUI) Run(ctx context.Context) error {
 	// Channel to signal when the agent has exited
 	agentExited := make(chan struct{})
+
+	// Handle Ctrl-C cancellation
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt)
+	var lastSig time.Time
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-sigCh:
+				now := time.Now()
+				if now.Sub(lastSig) < time.Second {
+					os.Exit(1)
+				}
+				lastSig = now
+				u.agent.CancelCurrentRequest()
+			}
+		}
+	}()
 
 	// Start a goroutine to handle agent output
 	go func() {
@@ -312,9 +334,10 @@ func (u *TerminalUI) handleMessage(msg *api.Message) {
 				query, err = rlInstance.Readline()
 				if err != nil {
 					klog.Infof("Readline error: %v", err)
+					if err == readline.ErrInterrupt {
+						continue
+					}
 					switch err {
-					case readline.ErrInterrupt: // Handle Ctrl+C
-						u.agent.Input <- io.EOF
 					case io.EOF: // Handle Ctrl+D
 						u.agent.Input <- io.EOF
 					default:
@@ -372,8 +395,11 @@ func (u *TerminalUI) handleMessage(msg *api.Message) {
 				line, err = rlInstance.Readline()
 				if err != nil {
 					klog.Infof("Readline error: %v", err)
+					if err == readline.ErrInterrupt {
+						continue
+					}
 					switch err {
-					case readline.ErrInterrupt, io.EOF:
+					case io.EOF:
 						u.agent.Input <- io.EOF
 						return
 					default:
