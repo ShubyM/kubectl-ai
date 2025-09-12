@@ -32,8 +32,7 @@ func (f *fakeChat) Send(ctx context.Context, contents ...any) (gollm.ChatRespons
 }
 func (f *fakeChat) SendStreaming(ctx context.Context, contents ...any) (gollm.ChatResponseIterator, error) {
 	return func(yield func(gollm.ChatResponse, error) bool) {
-		// Emit one chunk then wait for cancellation
-		resp := fakeChatResponse{parts: []gollm.Part{fakeTextPart("partial")}}
+		resp := fakeChatResponse{candidate: fakeCandidate{parts: []gollm.Part{fakeTextPart("partial")}}}
 		f.tokenCh <- struct{}{}
 		if !yield(resp, nil) {
 			return
@@ -52,18 +51,6 @@ type fakeTextPart string
 
 func (p fakeTextPart) AsText() (string, bool)                        { return string(p), true }
 func (p fakeTextPart) AsFunctionCalls() ([]gollm.FunctionCall, bool) { return nil, false }
-
-type fakeCandidate struct{ parts []gollm.Part }
-
-func (c fakeCandidate) String() string      { return "" }
-func (c fakeCandidate) Parts() []gollm.Part { return c.parts }
-
-type fakeChatResponse struct{ parts []gollm.Part }
-
-func (r fakeChatResponse) UsageMetadata() any { return nil }
-func (r fakeChatResponse) Candidates() []gollm.Candidate {
-	return []gollm.Candidate{fakeCandidate{parts: r.parts}}
-}
 
 func TestCancelRequestAddsCancellationMessage(t *testing.T) {
 	ctx := context.Background()
