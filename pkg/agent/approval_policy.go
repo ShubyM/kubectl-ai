@@ -1,21 +1,25 @@
+// Copyright 2025 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package agent
 
-// ApprovalPolicy controls how the agent seeks permission before executing tool
-// calls suggested by the model.
 type ApprovalPolicy string
 
 const (
-	// ApprovalPolicyAutoApproveRead requests approval only when the tool
-	// call is expected to modify cluster resources or when that is
-	// unknown.
 	ApprovalPolicyAutoApproveRead ApprovalPolicy = "auto-approve-read"
-
-	// ApprovalPolicyParanoid always asks for approval before executing any
-	// tool call, regardless of whether it is read-only.
-	ApprovalPolicyParanoid ApprovalPolicy = "paranoid"
-
-	// ApprovalPolicyYolo disables approval checks entirely.
-	ApprovalPolicyYolo ApprovalPolicy = "yolo"
+	ApprovalPolicyParanoid        ApprovalPolicy = "paranoid"
+	ApprovalPolicyYolo            ApprovalPolicy = "yolo"
 )
 
 // IsValid reports whether the policy is one of the supported values.
