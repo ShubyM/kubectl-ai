@@ -330,7 +330,7 @@ func (cs *openAIChatSession) SendStreaming(ctx context.Context, contents ...any)
 
 			// Update the accumulator with the new chunk, guarding against
 			// panics from the upstream client when tool call indices are
-			// missing. See https://github.com/openai/openai-go/pull/458.
+			// missing. See https://github.com/openai/openai-go/issues/464 for more details.
 			if ok, err := addChunkSafely(&acc, chunk); err != nil {
 				klog.ErrorS(err, "Recovered from OpenAI accumulator panic while processing chunk")
 				yield(nil, fmt.Errorf("OpenAI streaming error while accumulating chunk: %w", err))
