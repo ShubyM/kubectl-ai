@@ -32,8 +32,8 @@ type kubectlMCPServer struct {
 	tools         tools.Tools
 	workDir       string
 	mcpManager    *mcp.Manager // Add MCP manager for external tool calls
-	mcpServerMode string       // Server mode (e.g., "mcd", "sse")
-	httpPort      int          // Port for HTTP-based server modes (e.g., "sse", "streamable-http")
+	mcpServerMode string       // Server mode (e.g., "streamable-http", "sse")
+	httpPort      int          // Port for HTTP-based server modes
 }
 
 func newKubectlMCPServer(ctx context.Context, kubectlConfig string, tools tools.Tools, workDir string, exposeExternalTools bool, serverMode string, httpPort int) (*kubectlMCPServer, error) {

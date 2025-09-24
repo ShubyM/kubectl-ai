@@ -133,7 +133,7 @@ Additional tools available depend on configured MCP servers:
 | `--external-tools` | `false` | Discover and expose external MCP tools (requires --mcp-server) |
 | `--kubeconfig` | `~/.kube/config` | Path to kubeconfig file |
 | `--mcp-server-mode` | `stdio` | Transport for the MCP server (`stdio`, `sse`, or `streamable-http`) |
-| `--sse-endpoint-port` | `9080` | Port for the HTTP endpoint when using `sse` or `streamable-http` modes |
+| `--http-port` | `9080` | Port for the HTTP endpoint when using `sse` or `streamable-http` modes |
 
 ## Architecture
 
