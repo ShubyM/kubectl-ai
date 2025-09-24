@@ -23,6 +23,16 @@ Start the MCP server with external MCP tool discovery enabled:
 kubectl-ai --mcp-server --external-tools
 ```
 
+### Expose an HTTP endpoint for MCP clients
+
+Run the server with the streamable HTTP transport to serve compatible MCP clients (including kubectl-ai's MCP client mode) over HTTP:
+
+```bash
+kubectl-ai --mcp-server --mcp-server-mode streamable-http --http-port 9080
+```
+
+This listens on `http://localhost:9080/mcp` by default. Use `--mcp-server-mode sse` for legacy HTTP+SSE clients.
+
 ## Configuration
 
 The enhanced MCP server will automatically discover and expose tools from configured MCP servers when `--external-tools` is enabled. Configure MCP servers using the standard MCP client configuration.
@@ -122,6 +132,8 @@ Additional tools available depend on configured MCP servers:
 | `--mcp-server` | `false` | Run in MCP server mode |
 | `--external-tools` | `false` | Discover and expose external MCP tools (requires --mcp-server) |
 | `--kubeconfig` | `~/.kube/config` | Path to kubeconfig file |
+| `--mcp-server-mode` | `stdio` | Transport for the MCP server (`stdio`, `sse`, or `streamable-http`) |
+| `--sse-endpoint-port` | `9080` | Port for the HTTP endpoint when using `sse` or `streamable-http` modes |
 
 ## Architecture
 

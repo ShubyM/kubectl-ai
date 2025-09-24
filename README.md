@@ -430,6 +430,14 @@ This creates a powerful **tool aggregation hub** where kubectl-ai acts as both:
 - **MCP Server**: Exposing kubectl tools to clients
 - **MCP Client**: Consuming tools from other MCP servers
 
+To serve clients over HTTP using the streamable transport, run:
+
+```bash
+kubectl-ai --mcp-server --mcp-server-mode streamable-http --http-port 9080
+```
+
+This starts an MCP endpoint at `http://localhost:9080/mcp`.
+
 The enhanced mode provides AI clients with access to both Kubernetes operations and general-purpose tools (filesystem, web search, databases, etc.) through a single MCP endpoint.
 
 📖 **For detailed configuration, examples, and troubleshooting, see the [MCP Server Documentation](./docs/mcp-server.md).**
