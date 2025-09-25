@@ -95,6 +95,14 @@ type Agent struct {
 	// MCPClientEnabled indicates whether MCP client mode is enabled
 	MCPClientEnabled bool
 
+	// OperationApprover classifies tool calls so cancellation can be
+	// handled appropriately.
+	OperationApprover OperationApprover
+
+	// WriteCancelGracePeriod determines how long we wait before forcefully
+	// cancelling write operations when the user requests cancellation.
+	WriteCancelGracePeriod time.Duration
+
 	// Recorder captures events for diagnostics
 	Recorder journal.Recorder
 
@@ -121,6 +129,8 @@ type Agent struct {
 	// currentRequest manages cancellation for the in-flight request.
 	currentRequest *RequestController
 }
+
+const defaultWriteCancelGracePeriod = 5 * time.Second
 
 // Assert Session implements ChatMessageStore
 var _ api.ChatMessageStore = &sessions.Session{}
@@ -153,28 +163,88 @@ func (c *Agent) startRequest(ctx context.Context) {
 // clearCurrentRequest cancels and removes the current request controller.
 func (c *Agent) clearCurrentRequest() {
 	c.sessionMu.Lock()
-	if c.currentRequest != nil {
-		c.currentRequest.Cancel()
-		c.currentRequest = nil
-		c.session.CurrentRequestID = ""
-	}
+	rc := c.currentRequest
 	c.sessionMu.Unlock()
+	if rc != nil {
+		c.clearRequest(rc)
+	}
+}
+
+// clearRequest cancels the provided request controller if it is still the
+// active request. It returns true if the request was cleared.
+func (c *Agent) clearRequest(rc *RequestController) bool {
+	c.sessionMu.Lock()
+	defer c.sessionMu.Unlock()
+	if c.currentRequest == nil || c.currentRequest != rc {
+		return false
+	}
+	c.currentRequest.Cancel()
+	c.currentRequest = nil
+	c.session.CurrentRequestID = ""
+	return true
 }
 
 // CancelRequest cancels the in-progress request with the given ID.
 func (c *Agent) CancelRequest(id string) {
-	c.sessionMu.Lock()
-	if c.currentRequest == nil || c.currentRequest.ID() != id {
-		c.sessionMu.Unlock()
+	rc, kind := c.currentRequestInfo(id)
+	if rc == nil {
 		return
 	}
-	c.sessionMu.Unlock()
 
-	c.clearCurrentRequest()
+	if !rc.MarkCancellationPending() {
+		return
+	}
+
+	if kind == OperationKindWrite {
+		grace := c.WriteCancelGracePeriod
+		if grace <= 0 {
+			c.finishCancellation(rc, "Request cancelled.")
+			return
+		}
+
+		c.addMessage(api.MessageSourceAgent, api.MessageTypeText,
+			fmt.Sprintf("Write operation in progress. Allowing up to %s to finish before cancelling.", grace))
+		go c.waitForWriteCancellation(rc, grace)
+		return
+	}
+
+	c.finishCancellation(rc, "Request cancelled.")
+}
+
+func (c *Agent) currentRequestInfo(id string) (*RequestController, OperationKind) {
+	c.sessionMu.Lock()
+	defer c.sessionMu.Unlock()
+	if c.currentRequest == nil || c.currentRequest.ID() != id {
+		return nil, OperationKindRead
+	}
+	return c.currentRequest, c.currentRequest.OperationKind()
+}
+
+func (c *Agent) waitForWriteCancellation(rc *RequestController, grace time.Duration) {
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+
+	select {
+	case <-rc.Context().Done():
+		if !timer.Stop() {
+			<-timer.C
+		}
+		c.finishCancellation(rc, "Request cancelled.")
+	case <-timer.C:
+		c.finishCancellation(rc, "Request cancelled.")
+	}
+}
+
+func (c *Agent) finishCancellation(rc *RequestController, message string) {
+	if !c.clearRequest(rc) {
+		return
+	}
 	c.setAgentState(api.AgentStateDone)
 	c.pendingFunctionCalls = []ToolCallAnalysis{}
 	c.currChatContent = nil
-	c.addMessage(api.MessageSourceAgent, api.MessageTypeText, "Request cancelled.")
+	if message != "" {
+		c.addMessage(api.MessageSourceAgent, api.MessageTypeText, message)
+	}
 }
 
 // addMessage creates a new message, adds it to the session, and sends it to the output channel
@@ -230,6 +300,13 @@ func (s *Agent) Init(ctx context.Context) error {
 	// when we support session, we will need to initialize this with the
 	// current history of the conversation.
 	s.currChatContent = []any{}
+
+	if s.OperationApprover == nil {
+		s.OperationApprover = DefaultOperationApprover{}
+	}
+	if s.WriteCancelGracePeriod == 0 {
+		s.WriteCancelGracePeriod = defaultWriteCancelGracePeriod
+	}
 
 	if s.InitialQuery == "" && s.RunOnce {
 		return fmt.Errorf("RunOnce mode requires an initial query to be provided")
@@ -465,6 +542,7 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 					}
 					dispatchToolCalls := c.handleChoice(ctx, choiceResponse)
 					if dispatchToolCalls {
+						c.setAgentState(api.AgentStateRunning)
 						if err := c.DispatchToolCalls(c.currentRequest.Context()); err != nil {
 							if errors.Is(err, context.Canceled) {
 								c.setAgentState(api.AgentStateDone)
@@ -484,7 +562,6 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 						}
 						// Clear pending function calls after execution
 						c.pendingFunctionCalls = []ToolCallAnalysis{}
-						c.setAgentState(api.AgentStateRunning)
 						c.currIteration = c.currIteration + 1
 					} else {
 						// if user has declined, we are done with this iteration
@@ -708,6 +785,8 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 				}
 
 				// we are here means we are in the clear to dispatch the tool calls
+				// Set the agent state to running before dispatching tool calls
+				c.setAgentState(api.AgentStateRunning)
 				if err := c.DispatchToolCalls(c.currentRequest.Context()); err != nil {
 					if errors.Is(err, context.Canceled) {
 						c.setAgentState(api.AgentStateDone)
@@ -933,6 +1012,12 @@ func (c *Agent) DispatchToolCalls(ctx context.Context) error {
 		toolDescription := call.ParsedToolCall.Description()
 
 		c.addMessage(api.MessageSourceModel, api.MessageTypeToolCallRequest, toolDescription)
+
+		if c.OperationApprover != nil {
+			if rc := c.currentRequest; rc != nil {
+				rc.SetOperationKind(c.OperationApprover.Classify(call))
+			}
+		}
 
 		output, err := call.ParsedToolCall.InvokeTool(ctx, tools.InvokeToolOptions{
 			Kubeconfig: c.Kubeconfig,

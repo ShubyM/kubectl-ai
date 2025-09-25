@@ -16,13 +16,16 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/GoogleCloudPlatform/kubectl-ai/gollm"
+	"github.com/GoogleCloudPlatform/kubectl-ai/internal/mocks"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/api"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/sessions"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/tools"
+	"go.uber.org/mock/gomock"
 )
 
 // fake implementations
@@ -143,6 +146,125 @@ func TestCancelRequestAddsCancellationMessage(t *testing.T) {
 	for _, m := range msgs[:len(msgs)-1] {
 		if m.Source == api.MessageSourceModel {
 			t.Fatalf("unexpected model output before cancellation: %v", m.Payload)
+		}
+	}
+}
+
+func TestAgentCancelsLongRunningTool(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	store := sessions.NewInMemoryChatStore()
+
+	client := mocks.NewMockClient(ctrl)
+	chat := mocks.NewMockChat(ctrl)
+
+	client.EXPECT().StartChat(gomock.Any(), "test-model").Return(chat)
+	chat.EXPECT().Initialize(gomock.Any()).Return(nil)
+	chat.EXPECT().SetFunctionDefinitions(gomock.Any()).Return(nil)
+
+	response := chatWith(fCalls("mocktool", map[string]any{}))
+	iter := gollm.ChatResponseIterator(func(yield func(gollm.ChatResponse, error) bool) {
+		yield(response, nil)
+	})
+	chat.EXPECT().SendStreaming(gomock.Any(), gomock.Any()).Return(iter, nil)
+
+	tool := mocks.NewMockTool(ctrl)
+	tool.EXPECT().Name().Return("mocktool").AnyTimes()
+	tool.EXPECT().Description().Return("mock tool").AnyTimes()
+	tool.EXPECT().FunctionDefinition().Return(&gollm.FunctionDefinition{Name: "mocktool"}).AnyTimes()
+	tool.EXPECT().IsInteractive(gomock.Any()).Return(false, nil).AnyTimes()
+	tool.EXPECT().CheckModifiesResource(gomock.Any()).Return("no").AnyTimes()
+
+	runStarted := make(chan struct{})
+	runCanceled := make(chan error, 1)
+
+	tool.EXPECT().Run(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, args map[string]any) (any, error) {
+		close(runStarted)
+		select {
+		case <-ctx.Done():
+			err := ctx.Err()
+			runCanceled <- err
+			return nil, err
+		case <-time.After(3 * time.Second):
+			err := errors.New("tool was not cancelled")
+			runCanceled <- err
+			return nil, err
+		}
+	})
+
+	var toolset tools.Tools
+	toolset.Init()
+	toolset.RegisterTool(tool)
+
+	a := &Agent{
+		ChatMessageStore: store,
+		LLM:              client,
+		Model:            "test-model",
+		Tools:            toolset,
+		MaxIterations:    2,
+		RunOnce:          true,
+		InitialQuery:     "run tool",
+		RemoveWorkDir:    true,
+	}
+
+	if err := a.Init(ctx); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	defer func() {
+		if err := a.Close(); err != nil {
+			t.Fatalf("close: %v", err)
+		}
+	}()
+
+	if err := a.Run(ctx, "run tool"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	var requestID string
+	for requestID == "" {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for request ID: %v", ctx.Err())
+		case <-time.After(10 * time.Millisecond):
+			requestID = a.Session().CurrentRequestID
+		}
+	}
+
+	select {
+	case <-ctx.Done():
+		t.Fatalf("timed out waiting for tool execution to start: %v", ctx.Err())
+	case <-runStarted:
+	}
+
+	a.CancelRequest(requestID)
+
+	var toolErr error
+	select {
+	case toolErr = <-runCanceled:
+	case <-ctx.Done():
+		t.Fatalf("timed out waiting for tool cancellation: %v", ctx.Err())
+	}
+	if !errors.Is(toolErr, context.Canceled) {
+		t.Fatalf("expected tool to be cancelled, got %v", toolErr)
+	}
+
+	sawCancel := false
+	for !sawCancel {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for cancellation message: %v", ctx.Err())
+		case v := <-a.Output:
+			m, ok := v.(*api.Message)
+			if !ok {
+				t.Fatalf("expected *api.Message on output, got %T", v)
+			}
+			if m.Source == api.MessageSourceAgent && m.Type == api.MessageTypeText && m.Payload == "Request cancelled." {
+				sawCancel = true
+			}
 		}
 	}
 }

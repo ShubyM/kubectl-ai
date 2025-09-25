@@ -268,6 +268,8 @@
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
 
+        const MAX_TEXTAREA_HEIGHT = 160; // Tailwind max-h-40 (10rem) for textarea auto-resize limit
+
         function App() {
             const [messages, setMessages] = useState([]);
             const [input, setInput] = useState('');
@@ -297,9 +299,12 @@
             // Auto-resize textarea
             useEffect(() => {
                 if (inputRef.current) {
-                    inputRef.current.style.height = 'auto';
-                    const scrollHeight = inputRef.current.scrollHeight;
-                    inputRef.current.style.height = scrollHeight + 'px';
+                    const textarea = inputRef.current;
+                    textarea.style.height = 'auto';
+                    const scrollHeight = textarea.scrollHeight;
+                    const newHeight = Math.min(scrollHeight, MAX_TEXTAREA_HEIGHT);
+                    textarea.style.height = newHeight + 'px';
+                    textarea.style.overflowY = scrollHeight > MAX_TEXTAREA_HEIGHT ? 'auto' : 'hidden';
                 }
             }, [input]);
 
@@ -884,7 +889,7 @@
                                         }}
                                         placeholder={getInputPlaceholder()}
                                         disabled={!canSendMessage}
-                                        className={`w-full px-4 py-3 pr-12 border rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent transition-colors resize-none overflow-y-auto max-h-40 custom-scrollbar align-bottom ${
+                                        className={`w-full px-4 py-3 pr-12 border rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent transition-colors resize-none max-h-40 custom-scrollbar align-bottom ${
                                             isDarkMode 
                                                 ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' 
                                                 : 'bg-white border-gray-300 text-gray-900 placeholder-gray-400'
