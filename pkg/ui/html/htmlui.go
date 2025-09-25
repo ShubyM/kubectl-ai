@@ -335,7 +335,10 @@ func (u *HTMLUserInterface) handlePOSTCancelRequest(w http.ResponseWriter, req *
 	}
 	id := req.FormValue("id")
 	if id == "" {
-		http.Error(w, "missing id", http.StatusBadRequest)
+		id = u.agent.Session().CurrentRequestID
+	}
+	if id == "" {
+		http.Error(w, "no active request", http.StatusBadRequest)
 		return
 	}
 	u.agent.CancelRequest(id)
