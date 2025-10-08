@@ -78,23 +78,18 @@ func copyFileWithMode(src, dst string, mode fs.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
 		return err
 	}
-	return os.WriteFile(dst, data, mode)
-}
-
-func setReadOnly(path string, originalMode fs.FileMode) error {
-	mode := originalMode
 	if mode == 0 {
-		info, err := os.Stat(path)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return nil
-			}
-			return err
+		if info, statErr := os.Stat(src); statErr == nil {
+			mode = info.Mode()
 		}
-		mode = info.Mode()
 	}
-	readOnly := mode &^ 0222
-	return os.Chmod(path, readOnly)
+	if err := os.WriteFile(dst, data, mode); err != nil {
+		return err
+	}
+	if mode != 0 {
+		return os.Chmod(dst, mode)
+	}
+	return nil
 }
 
 func runEvaluation(ctx context.Context, config EvalConfig) error {
@@ -562,9 +557,6 @@ func (x *TaskExecution) restoreProtectedScripts() error {
 		}
 		if err := copyFileWithMode(src, dst, script.mode); err != nil {
 			return fmt.Errorf("restoring script %s: %w", script.relPath, err)
-		}
-		if err := setReadOnly(dst, script.mode); err != nil {
-			return fmt.Errorf("protecting script %s: %w", script.relPath, err)
 		}
 	}
 	return nil
