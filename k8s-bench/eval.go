@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,6 +32,70 @@ import (
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/yaml"
 )
+
+func copyDir(src, dst string) error {
+	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if err := os.MkdirAll(target, info.Mode()); err != nil {
+				return err
+			}
+			return os.Chmod(target, info.Mode())
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			linkTarget, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			if err := os.Symlink(linkTarget, target); err != nil {
+				return err
+			}
+			return nil
+		}
+		return copyFileWithMode(path, target, info.Mode())
+	})
+}
+
+func copyFileWithMode(src, dst string, mode fs.FileMode) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(dst, data, mode)
+}
+
+func setReadOnly(path string, originalMode fs.FileMode) error {
+	mode := originalMode
+	if mode == 0 {
+		info, err := os.Stat(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		mode = info.Mode()
+	}
+	readOnly := mode &^ 0222
+	return os.Chmod(path, readOnly)
+}
 
 func runEvaluation(ctx context.Context, config EvalConfig) error {
 	logger := klog.FromContext(ctx)
@@ -289,15 +354,37 @@ func evaluateTask(ctx context.Context, config EvalConfig, taskID string, task Ta
 		taskOutputDir:     taskOutputDir,
 	}
 
-	taskDir := filepath.Join(config.TasksDir, taskID)
-	taskDirAbs, err := filepath.Abs(taskDir)
+	originalTaskDir := filepath.Join(config.TasksDir, taskID)
+	originalTaskDirAbs, err := filepath.Abs(originalTaskDir)
 	if err != nil {
 		result.Result = "fail"
 		result.Error = err.Error()
 		return result
 	}
-	taskDir = taskDirAbs
-	x.taskDir = taskDir
+	x.taskOriginalDir = originalTaskDirAbs
+	workspaceDir := filepath.Join(taskOutputDir, "workspace")
+	if err := os.RemoveAll(workspaceDir); err != nil {
+		result.Result = "fail"
+		result.Error = fmt.Sprintf("preparing workspace: %v", err)
+		return result
+	}
+	if err := copyDir(x.taskOriginalDir, workspaceDir); err != nil {
+		result.Result = "fail"
+		result.Error = fmt.Sprintf("preparing workspace: %v", err)
+		return result
+	}
+	workspaceDirAbs, err := filepath.Abs(workspaceDir)
+	if err != nil {
+		result.Result = "fail"
+		result.Error = fmt.Sprintf("resolving workspace path: %v", err)
+		return result
+	}
+	x.taskDir = workspaceDirAbs
+	if err := x.prepareProtectedScripts(&task); err != nil {
+		result.Result = "fail"
+		result.Error = fmt.Sprintf("protecting task scripts: %v", err)
+		return result
+	}
 
 	defer func() {
 		if err := x.runCleanup(ctx); err != nil {
@@ -359,10 +446,15 @@ func evaluateTask(ctx context.Context, config EvalConfig, taskID string, task Ta
 		}
 	}
 
+	if err := x.restoreProtectedScripts(); err != nil {
+		result.Error = fmt.Sprintf("restoring task scripts: %v", err)
+		return result
+	}
+
 	verifierSucceeded := false
 	// Run verifier if specified
 	if task.Verifier != "" {
-		verifierPath := filepath.Join(taskDir, task.Verifier)
+		verifierPath := filepath.Join(x.taskDir, task.Verifier)
 		cmd := exec.CommandContext(ctx, verifierPath)
 		cmd.Env = append(os.Environ(), fmt.Sprintf("KUBECONFIG=%s", x.kubeConfig))
 		fmt.Printf("\nRunning verifier for task %s\n", taskID)
@@ -412,12 +504,70 @@ type TaskExecution struct {
 	task      *Task
 	taskID    string
 	taskDir   string
+	// taskOriginalDir is the immutable task specification directory
+	taskOriginalDir  string
+	protectedScripts []protectedScript
 
 	// taskOutputDir is where we can create artifacts or write logs while executing the task
 	taskOutputDir string
 
 	// cleanupFunctions are a set of cleanupFunctions we run to undo anything we ran
 	cleanupFunctions []func() error
+}
+
+type protectedScript struct {
+	relPath string
+	mode    fs.FileMode
+}
+
+func (x *TaskExecution) prepareProtectedScripts(task *Task) error {
+	if task == nil {
+		return nil
+	}
+	var scripts []protectedScript
+	candidates := []string{task.Setup, task.Verifier, task.Cleanup}
+	for _, rel := range candidates {
+		if rel == "" {
+			continue
+		}
+		origPath := filepath.Join(x.taskOriginalDir, rel)
+		info, err := os.Stat(origPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("stat script %s: %w", rel, err)
+		}
+		scripts = append(scripts, protectedScript{
+			relPath: rel,
+			mode:    info.Mode(),
+		})
+	}
+	x.protectedScripts = scripts
+	return x.restoreProtectedScripts()
+}
+
+func (x *TaskExecution) restoreProtectedScripts() error {
+	for _, script := range x.protectedScripts {
+		src := filepath.Join(x.taskOriginalDir, script.relPath)
+		dst := filepath.Join(x.taskDir, script.relPath)
+		if _, err := os.Stat(src); err != nil {
+			if os.IsNotExist(err) {
+				if removeErr := os.Remove(dst); removeErr != nil && !os.IsNotExist(removeErr) {
+					return fmt.Errorf("removing stale script %s: %w", script.relPath, removeErr)
+				}
+				continue
+			}
+			return fmt.Errorf("stat script %s: %w", script.relPath, err)
+		}
+		if err := copyFileWithMode(src, dst, script.mode); err != nil {
+			return fmt.Errorf("restoring script %s: %w", script.relPath, err)
+		}
+		if err := setReadOnly(dst, script.mode); err != nil {
+			return fmt.Errorf("protecting script %s: %w", script.relPath, err)
+		}
+	}
+	return nil
 }
 
 type agentArgTemplateData struct {
@@ -500,6 +650,10 @@ func (x *TaskExecution) runSetup(ctx context.Context) error {
 
 func (x *TaskExecution) runCleanup(ctx context.Context) error {
 	var errs []error
+
+	if err := x.restoreProtectedScripts(); err != nil {
+		errs = append(errs, err)
+	}
 
 	// Run cleanup if specified
 	if x.task.Cleanup != "" {
