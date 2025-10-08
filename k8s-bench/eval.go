@@ -265,6 +265,7 @@ func evaluateTask(ctx context.Context, config EvalConfig, taskID string, task Ta
 	result := model.TaskResult{
 		Task:      taskID,
 		LLMConfig: llmConfig,
+		AgentBin:  config.AgentBin,
 	}
 
 	taskOutputDir := filepath.Join(config.OutputDir, taskID, llmConfig.ID)
@@ -276,14 +277,16 @@ func evaluateTask(ctx context.Context, config EvalConfig, taskID string, task Ta
 	}
 
 	x := &TaskExecution{
-		AgentBin:      config.AgentBin,
-		kubeConfig:    config.KubeConfig,
-		result:        &result,
-		llmConfig:     llmConfig,
-		log:           multiWriter,
-		task:          &task,
-		taskID:        taskID,
-		taskOutputDir: taskOutputDir,
+		AgentBin:          config.AgentBin,
+		agentArgTemplates: config.AgentArgTemplates,
+		agentID:           config.AgentID,
+		kubeConfig:        config.KubeConfig,
+		result:            &result,
+		llmConfig:         llmConfig,
+		log:               multiWriter,
+		task:              &task,
+		taskID:            taskID,
+		taskOutputDir:     taskOutputDir,
 	}
 
 	taskDir := filepath.Join(config.TasksDir, taskID)
@@ -372,15 +375,7 @@ func evaluateTask(ctx context.Context, config EvalConfig, taskID string, task Ta
 			logString := logBuffer.String()
 			logTail, truncated := getLastNLines(logString, maxLogLines)
 			// build log file path
-			shimSegment := "shim_disabled"
-			if x.llmConfig.EnableToolUseShim {
-				shimSegment = "shim_enabled"
-			}
-			logPath := filepath.Join(
-				config.OutputDir,
-				taskID,
-				shimSegment+"-"+x.llmConfig.ProviderID+"-"+x.llmConfig.ModelID,
-			)
+			logPath := filepath.Join(config.OutputDir, taskID, x.llmConfig.ID, "log.txt")
 			failureMessage := fmt.Sprintf("verifier script failed: %v\n---LOG---\n%s", err, logTail)
 			if truncated {
 				failureMessage += fmt.Sprintf("\n... (log truncated, full log at %s)", logPath)
@@ -408,6 +403,9 @@ type TaskExecution struct {
 	// AgentBin holds the path to the agent to execute
 	AgentBin string
 
+	agentArgTemplates []AgentArgTemplate
+	agentID           string
+
 	llmConfig model.LLMConfig
 	result    *model.TaskResult
 	log       io.Writer
@@ -420,6 +418,31 @@ type TaskExecution struct {
 
 	// cleanupFunctions are a set of cleanupFunctions we run to undo anything we ran
 	cleanupFunctions []func() error
+}
+
+type agentArgTemplateData struct {
+	AgentID    string
+	Kubeconfig string
+	TracePath  string
+}
+
+func findFlagValue(args []string, names ...string) string {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		for _, name := range names {
+			prefix := name + "="
+			if strings.HasPrefix(arg, prefix) {
+				return strings.TrimSpace(arg[len(prefix):])
+			}
+			if arg == name && i+1 < len(args) {
+				next := args[i+1]
+				if !strings.HasPrefix(next, "-") {
+					return strings.TrimSpace(next)
+				}
+			}
+		}
+	}
+	return ""
 }
 
 func (x *TaskExecution) runSetup(ctx context.Context) error {
@@ -502,15 +525,42 @@ func (x *TaskExecution) runCleanup(ctx context.Context) error {
 func (x *TaskExecution) runAgent(ctx context.Context) (string, error) {
 	tracePath := filepath.Join(x.taskOutputDir, "trace.yaml")
 
-	args := []string{
-		"--kubeconfig", x.kubeConfig,
-		"--llm-provider", x.llmConfig.ProviderID,
-		fmt.Sprintf("--enable-tool-use-shim=%t", x.llmConfig.EnableToolUseShim),
-		fmt.Sprintf("--quiet=%t", x.llmConfig.Quiet),
-		"--model", x.llmConfig.ModelID,
-		"--trace-path", tracePath,
-		"--skip-permissions",
-		"--show-tool-output",
+	templateData := agentArgTemplateData{
+		AgentID:    x.agentID,
+		Kubeconfig: x.kubeConfig,
+		TracePath:  tracePath,
+	}
+
+	args := make([]string, 0, len(x.agentArgTemplates))
+	for _, tmpl := range x.agentArgTemplates {
+		var buf bytes.Buffer
+		if err := tmpl.Template.Execute(&buf, templateData); err != nil {
+			return "", fmt.Errorf("building agent argument from template %q: %w", tmpl.Raw, err)
+		}
+		arg := strings.TrimSpace(buf.String())
+		if arg == "" {
+			continue
+		}
+		args = append(args, arg)
+	}
+
+	if x.result != nil {
+		x.result.LLMConfig.AgentArgs = append([]string(nil), args...)
+	}
+
+	provider := findFlagValue(args, "--llm-provider", "--provider")
+	model := findFlagValue(args, "--model", "--model-id", "--gemini-model")
+	if provider != "" {
+		x.llmConfig.ProviderID = provider
+		if x.result != nil {
+			x.result.LLMConfig.ProviderID = provider
+		}
+	}
+	if model != "" {
+		x.llmConfig.ModelID = model
+		if x.result != nil {
+			x.result.LLMConfig.ModelID = model
+		}
 	}
 
 	stdinReader, stdinWriter := io.Pipe()
@@ -572,10 +622,26 @@ func printResults(allResults []model.TaskResult) {
 
 	for _, result := range allResults {
 		fmt.Printf("\nTask: %s\n", result.Task)
-		fmt.Printf("  LLM Config: %+v\n", result.LLMConfig)
-		fmt.Printf("    %v\n", result.Result)
+		agentLabel := agentModelLabel(result.LLMConfig.AgentID, result.LLMConfig.ModelID)
+		fmt.Printf("  Agent: %s\n", agentLabel)
+		if result.AgentBin != "" {
+			fmt.Printf("    Binary: %s\n", result.AgentBin)
+		}
+		if len(result.LLMConfig.AgentArgs) > 0 {
+			fmt.Printf("    Args: %s\n", strings.Join(result.LLMConfig.AgentArgs, " "))
+		}
+		if provider := strings.TrimSpace(result.LLMConfig.ProviderID); provider != "" {
+			fmt.Printf("  Provider: %s\n", provider)
+		}
+		if result.LLMConfig.EnableToolUseShim {
+			fmt.Printf("  Tool Use Shim: %v\n", result.LLMConfig.EnableToolUseShim)
+		}
+		if result.LLMConfig.Quiet {
+			fmt.Printf("  Quiet: %v\n", result.LLMConfig.Quiet)
+		}
+		fmt.Printf("  Result: %s\n", result.Result)
 		if result.Error != "" {
-			fmt.Printf("    Error: %s\n", result.Error)
+			fmt.Printf("  Error: %s\n", result.Error)
 		}
 	}
 }

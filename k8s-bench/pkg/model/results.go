@@ -20,6 +20,7 @@ type TaskResult struct {
 	Task      string    `json:"name"`
 	LLMConfig LLMConfig `json:"llmConfig"`
 	Result    string    `json:"result"`
+	AgentBin  string    `json:"agentBin,omitempty"`
 
 	// Failure contains a list of test failures, if there were unmet expectations.
 	// These do not indicate an infrastructure failure, rather they are the details of a test failure.
@@ -40,6 +41,8 @@ type LLMConfig struct {
 
 	ProviderID string `json:"provider"`
 	ModelID    string `json:"model"`
+	AgentID    string `json:"agent"`
+	AgentArgs  []string `json:"agentArgs,omitempty"`
 
 	EnableToolUseShim bool `json:"enableToolUseShim"`
 

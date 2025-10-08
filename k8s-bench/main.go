@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"text/template"
 	"time"
 
 	"github.com/GoogleCloudPlatform/kubectl-ai/k8s-bench/pkg/model"
@@ -99,10 +100,17 @@ type EvalConfig struct {
 	TasksDir          string
 	TaskPattern       string
 	AgentBin          string
+	AgentID           string
+	AgentArgTemplates []AgentArgTemplate
 	Concurrency       int
 	CreateKindCluster bool
 
 	OutputDir string
+}
+
+type AgentArgTemplate struct {
+	Raw      string
+	Template *template.Template
 }
 
 type AnalyzeConfig struct {
@@ -193,28 +201,25 @@ func runEvals(ctx context.Context) error {
 		flag.PrintDefaults()
 	}
 
-	llmProvider := "gemini"
-	modelList := ""
-	defaultKubeConfig := "~/.kube/config"
-	enableToolUseShim := false
-	quiet := true
+	// Derive kubeconfig from environment as a default; fall back to the standard path.
+	kubeconfigEnv := os.Getenv("KUBECONFIG")
+	if kubeconfigEnv != "" {
+		paths := strings.Split(kubeconfigEnv, string(os.PathListSeparator))
+		config.KubeConfig = paths[0]
+	} else {
+		config.KubeConfig = "~/.kube/config"
+	}
+
+	var agentArgTemplates Strings
 
 	flag.StringVar(&config.TasksDir, "tasks-dir", config.TasksDir, "Directory containing evaluation tasks")
-	flag.StringVar(&config.KubeConfig, "kubeconfig", config.KubeConfig, "Path to kubeconfig file")
 	flag.StringVar(&config.TaskPattern, "task-pattern", config.TaskPattern, "Pattern to filter tasks (e.g. 'pod' or 'redis')")
-	flag.StringVar(&config.AgentBin, "agent-bin", config.AgentBin, "Path to kubernetes agent binary")
-	flag.StringVar(&llmProvider, "llm-provider", llmProvider, "Specific LLM provider to evaluate (e.g. 'gemini' or 'ollama')")
-	flag.StringVar(&modelList, "models", modelList, "Comma-separated list of models to evaluate (e.g. 'gemini-1.0,gemini-2.0')")
-	flag.BoolVar(&enableToolUseShim, "enable-tool-use-shim", enableToolUseShim, "Enable tool use shim")
-	flag.BoolVar(&quiet, "quiet", quiet, "Quiet mode (non-interactive mode)")
+	flag.StringVar(&config.AgentBin, "agent-bin", config.AgentBin, "Path to the agent executable to benchmark")
 	flag.IntVar(&config.Concurrency, "concurrency", 0, "Number of tasks to run concurrently (0 = auto, 1 = sequential)")
 	flag.BoolVar(&config.CreateKindCluster, "create-kind-cluster", false, "Create a temporary kind cluster for the evaluation run")
 	flag.StringVar(&config.OutputDir, "output-dir", config.OutputDir, "Directory to write results to")
+	flag.Var(&agentArgTemplates, "agent-args", "Additional arguments for the agent (repeatable). Templates may reference: AgentID, Kubeconfig, TracePath.")
 	flag.Parse()
-
-	if config.KubeConfig == "" {
-		config.KubeConfig = defaultKubeConfig
-	}
 
 	expandedKubeconfig, err := expandPath(config.KubeConfig)
 	if err != nil {
@@ -222,38 +227,26 @@ func runEvals(ctx context.Context) error {
 	}
 	config.KubeConfig = expandedKubeconfig
 
-	defaultModels := map[string][]string{
-		"gemini": {"gemini-2.5-pro"},
+	if config.AgentBin == "" {
+		return fmt.Errorf("--agent-bin is required")
 	}
 
-	models := defaultModels
-	if modelList != "" {
-		if llmProvider == "" {
-			return fmt.Errorf("--llm-provider is required when --models is specified")
-		}
-		modelSlice := strings.Split(modelList, ",")
-		models = map[string][]string{
-			llmProvider: modelSlice,
-		}
+	agentID := strings.TrimSuffix(filepath.Base(config.AgentBin), filepath.Ext(config.AgentBin))
+	if agentID == "" {
+		agentID = "agent"
 	}
+	config.AgentID = agentID
+	config.LLMConfigs = append(config.LLMConfigs, model.LLMConfig{
+		ID:      agentID,
+		AgentID: agentID,
+	})
 
-	for llmProviderID, models := range models {
-		var toolUseShimStr string
-		if enableToolUseShim {
-			toolUseShimStr = "shim_enabled"
-		} else {
-			toolUseShimStr = "shim_disabled"
+	for _, tmplStr := range agentArgTemplates {
+		tmpl, err := template.New("agent-arg").Option("missingkey=error").Parse(tmplStr)
+		if err != nil {
+			return fmt.Errorf("failed to parse agent arg template %q: %w", tmplStr, err)
 		}
-		for _, modelID := range models {
-			id := fmt.Sprintf("%s-%s-%s", toolUseShimStr, llmProviderID, modelID)
-			config.LLMConfigs = append(config.LLMConfigs, model.LLMConfig{
-				ID:                id,
-				ProviderID:        llmProviderID,
-				ModelID:           modelID,
-				EnableToolUseShim: enableToolUseShim,
-				Quiet:             quiet,
-			})
-		}
+		config.AgentArgTemplates = append(config.AgentArgTemplates, AgentArgTemplate{Raw: tmplStr, Template: tmpl})
 	}
 
 	tasks, err := loadTasks(config)
@@ -367,6 +360,34 @@ func collectResults(inputDir string) ([]model.TaskResult, error) {
 	return allResults, nil
 }
 
+func normalizedAgentID(agentID string) string {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return "unknown"
+	}
+	return agentID
+}
+
+func normalizedModelID(modelID string) string {
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" {
+		return "gemini"
+	}
+	return modelID
+}
+
+func agentModelLabel(agentID, modelID string) string {
+	return fmt.Sprintf("%s (%s)", normalizedAgentID(agentID), normalizedModelID(modelID))
+}
+
+func normalizedProviderID(providerID string) string {
+	providerID = strings.TrimSpace(providerID)
+	if providerID == "" {
+		return "unspecified"
+	}
+	return providerID
+}
+
 func printFailureDetails(buffer *strings.Builder, results []model.TaskResult, title string, showModel bool) {
 	hasFailures := false
 	for _, result := range results {
@@ -375,12 +396,12 @@ func printFailureDetails(buffer *strings.Builder, results []model.TaskResult, ti
 				buffer.WriteString(fmt.Sprintf("\n**%s Failure Details**\n\n", title))
 				hasFailures = true
 			}
-			// for the IgnoreToolUseShim case
-			if showModel {
-				buffer.WriteString(fmt.Sprintf("**Task: %s (%s)**\n", result.Task, result.LLMConfig.ModelID))
-			} else {
-				buffer.WriteString(fmt.Sprintf("**Task: %s**\n", result.Task))
+			agentLabel := agentModelLabel(result.LLMConfig.AgentID, result.LLMConfig.ModelID)
+			shimLabel := "tool-use disabled"
+			if result.LLMConfig.EnableToolUseShim {
+				shimLabel = "tool-use enabled"
 			}
+			buffer.WriteString(fmt.Sprintf("**Task: %s (%s, %s)**\n", result.Task, agentLabel, shimLabel))
 			for _, failure := range result.Failures {
 				buffer.WriteString(fmt.Sprintf("```\n%s\n```\n", failure.Message))
 			}
@@ -395,119 +416,154 @@ func printMarkdownResults(config AnalyzeConfig, results []model.TaskResult, resu
 
 	buffer.WriteString("# K8s-bench Evaluation Results\n\n")
 
-	allModels := make(map[string]bool) // Track all unique models
-	for _, result := range results {
-		allModels[result.LLMConfig.ModelID] = true
+	type summaryCounts struct {
+		success int
+		fail    int
 	}
-	// Convert allModels map to a sorted slice
-	models := make([]string, 0, len(allModels))
-	for model := range allModels {
-		models = append(models, model)
-	}
-	sort.Strings(models)
 
-	// Overall summary across all results
 	totalCount := len(results)
 	overallSuccessCount := 0
 	overallFailCount := 0
+
+	agentModelSet := make(map[string]map[string]struct{})
+	summaryByAgent := make(map[string]map[string]*summaryCounts)
+	toolUseSummaryByAgent := make(map[string]map[string]map[string]*summaryCounts)
+	toolUseKeysSet := make(map[string]struct{})
+	resultsByAgentModel := make(map[string]map[string][]model.TaskResult)
+	resultsByToolUseShim := make(map[string][]model.TaskResult)
+
 	for _, result := range results {
+		agentID := normalizedAgentID(result.LLMConfig.AgentID)
+		modelID := normalizedModelID(result.LLMConfig.ModelID)
+
+		if _, ok := agentModelSet[agentID]; !ok {
+			agentModelSet[agentID] = make(map[string]struct{})
+		}
+		agentModelSet[agentID][modelID] = struct{}{}
+
+		if _, ok := summaryByAgent[agentID]; !ok {
+			summaryByAgent[agentID] = make(map[string]*summaryCounts)
+		}
+		if _, ok := summaryByAgent[agentID][modelID]; !ok {
+			summaryByAgent[agentID][modelID] = &summaryCounts{}
+		}
+
+		shimKey := "shim_disabled"
+		if result.LLMConfig.EnableToolUseShim {
+			shimKey = "shim_enabled"
+		}
+		toolUseKeysSet[shimKey] = struct{}{}
+		resultsByToolUseShim[shimKey] = append(resultsByToolUseShim[shimKey], result)
+
+		if _, ok := toolUseSummaryByAgent[agentID]; !ok {
+			toolUseSummaryByAgent[agentID] = make(map[string]map[string]*summaryCounts)
+		}
+		if _, ok := toolUseSummaryByAgent[agentID][modelID]; !ok {
+			toolUseSummaryByAgent[agentID][modelID] = make(map[string]*summaryCounts)
+		}
+		if _, ok := toolUseSummaryByAgent[agentID][modelID][shimKey]; !ok {
+			toolUseSummaryByAgent[agentID][modelID][shimKey] = &summaryCounts{}
+		}
+
 		if strings.Contains(strings.ToLower(result.Result), "success") {
+			summaryByAgent[agentID][modelID].success++
+			toolUseSummaryByAgent[agentID][modelID][shimKey].success++
 			overallSuccessCount++
 		} else {
+			summaryByAgent[agentID][modelID].fail++
+			toolUseSummaryByAgent[agentID][modelID][shimKey].fail++
 			overallFailCount++
 		}
+
+		if _, ok := resultsByAgentModel[agentID]; !ok {
+			resultsByAgentModel[agentID] = make(map[string][]model.TaskResult)
+		}
+		resultsByAgentModel[agentID][modelID] = append(resultsByAgentModel[agentID][modelID], result)
 	}
 
-	// --- Model Performance Summary ---
+	agents := make([]string, 0, len(agentModelSet))
+	for agentID := range agentModelSet {
+		agents = append(agents, agentID)
+	}
+	sort.Strings(agents)
+
+	toolUseKeys := make([]string, 0, len(toolUseKeysSet))
+	for key := range toolUseKeysSet {
+		toolUseKeys = append(toolUseKeys, key)
+	}
+	sort.Strings(toolUseKeys)
+
+	// --- Performance Summary ---
 	buffer.WriteString("## Model Performance Summary\n\n")
 
 	if config.IgnoreToolUseShim {
-		// Simplified table ignoring shim status
-		buffer.WriteString("| Model | Success | Fail |\n")
+		buffer.WriteString("| Agent | Success | Fail |\n")
 		buffer.WriteString("|-------|---------|------|\n")
 
-		for _, model := range models {
-			successCount := 0
-			failCount := 0
-			for _, result := range results {
-				if result.LLMConfig.ModelID == model {
-					if strings.Contains(strings.ToLower(result.Result), "success") {
-						successCount++
-					} else {
-						failCount++
-					}
-				}
+		for _, agentID := range agents {
+			modelSet := agentModelSet[agentID]
+			models := make([]string, 0, len(modelSet))
+			for modelID := range modelSet {
+				models = append(models, modelID)
 			}
-			buffer.WriteString(fmt.Sprintf("| %s | %d | %d |\n", model, successCount, failCount))
-		}
-		// Overall totals row
-		buffer.WriteString("| **Total** |")
-		buffer.WriteString(fmt.Sprintf(" %d | %d |\n\n", overallSuccessCount, overallFailCount))
+			sort.Strings(models)
 
+			for _, modelID := range models {
+				counts := summaryByAgent[agentID][modelID]
+				buffer.WriteString(fmt.Sprintf("| %s | %d | %d |\n", agentModelLabel(agentID, modelID), counts.success, counts.fail))
+			}
+		}
+
+		buffer.WriteString(fmt.Sprintf("| **Total** | %d | %d |\n\n", overallSuccessCount, overallFailCount))
 	} else {
-		// Original table grouped by tool use shim status
-		resultsByToolUseShim := make(map[string][]model.TaskResult)
-		for _, result := range results {
-			var toolUseShimStr string
-			if result.LLMConfig.EnableToolUseShim {
-				toolUseShimStr = "shim_enabled"
-			} else {
-				toolUseShimStr = "shim_disabled"
-			}
-			resultsByToolUseShim[toolUseShimStr] = append(resultsByToolUseShim[toolUseShimStr], result)
-		}
-
-		toolUseShimStrs := make([]string, 0, len(resultsByToolUseShim))
-		for toolUseShimStr := range resultsByToolUseShim {
-			toolUseShimStrs = append(toolUseShimStrs, toolUseShimStr)
-		}
-		sort.Strings(toolUseShimStrs)
-
-		// Create header row with success/fail columns for each toolUseShimStr
-		buffer.WriteString("| Model |")
-		for _, toolUseShimStr := range toolUseShimStrs {
-			buffer.WriteString(fmt.Sprintf(" %s Success | %s Fail |", toolUseShimStr, toolUseShimStr))
+		buffer.WriteString("| Agent |")
+		for _, shimKey := range toolUseKeys {
+			buffer.WriteString(fmt.Sprintf(" %s Success | %s Fail |", shimKey, shimKey))
 		}
 		buffer.WriteString("\n|-------|")
-		for range toolUseShimStrs {
-			buffer.WriteString("------------|-----------|")
+		for range toolUseKeys {
+			buffer.WriteString("---------------|-----------|")
 		}
 		buffer.WriteString("\n")
 
-		// Add a row for each model with success/fail counts for each strategy
-		for _, model := range models {
-			buffer.WriteString(fmt.Sprintf("| %s |", model))
-			for _, toolUseShimStr := range toolUseShimStrs {
-				successCount := 0
-				failCount := 0
-				// Count success/fail for this model and toolUseShimStr
-				for _, result := range resultsByToolUseShim[toolUseShimStr] {
-					if result.LLMConfig.ModelID == model {
-						if strings.Contains(strings.ToLower(result.Result), "success") {
-							successCount++
-						} else {
-							failCount++
-						}
-					}
-				}
-				buffer.WriteString(fmt.Sprintf(" %d | %d |", successCount, failCount))
+		for _, agentID := range agents {
+			modelSet := agentModelSet[agentID]
+			models := make([]string, 0, len(modelSet))
+			for modelID := range modelSet {
+				models = append(models, modelID)
 			}
-			buffer.WriteString("\n")
+			sort.Strings(models)
+
+			for _, modelID := range models {
+				buffer.WriteString(fmt.Sprintf("| %s |", agentModelLabel(agentID, modelID)))
+				for _, shimKey := range toolUseKeys {
+					counts := toolUseSummaryByAgent[agentID][modelID][shimKey]
+					successCount := 0
+					failCount := 0
+					if counts != nil {
+						successCount = counts.success
+						failCount = counts.fail
+					}
+					buffer.WriteString(fmt.Sprintf(" %d | %d |", successCount, failCount))
+				}
+				buffer.WriteString("\n")
+			}
 		}
 
-		// Add a row showing overall totals for each toolUseShimStr
 		buffer.WriteString("| **Total** |")
-		for _, toolUseShimStr := range toolUseShimStrs {
-			successCount := 0
-			failCount := 0
-			for _, result := range resultsByToolUseShim[toolUseShimStr] {
-				if strings.Contains(strings.ToLower(result.Result), "success") {
-					successCount++
-				} else {
-					failCount++
+		for _, shimKey := range toolUseKeys {
+			totalSuccess := 0
+			totalFail := 0
+			for _, agentID := range agents {
+				for modelID := range agentModelSet[agentID] {
+					counts := toolUseSummaryByAgent[agentID][modelID][shimKey]
+					if counts != nil {
+						totalSuccess += counts.success
+						totalFail += counts.fail
+					}
 				}
 			}
-			buffer.WriteString(fmt.Sprintf(" %d | %d |", successCount, failCount))
+			buffer.WriteString(fmt.Sprintf(" %d | %d |", totalSuccess, totalFail))
 		}
 		buffer.WriteString("\n\n")
 	}
@@ -520,65 +576,64 @@ func printMarkdownResults(config AnalyzeConfig, results []model.TaskResult, resu
 
 	// --- Detailed Results ---
 	if config.IgnoreToolUseShim {
-		// Group results by model for detailed view
-		resultsByModel := make(map[string][]model.TaskResult)
-		for _, result := range results {
-			resultsByModel[result.LLMConfig.ModelID] = append(resultsByModel[result.LLMConfig.ModelID], result)
-		}
+		for _, agentID := range agents {
+			buffer.WriteString(fmt.Sprintf("## Agent: %s\n\n", normalizedAgentID(agentID)))
+			modelSet := agentModelSet[agentID]
+			models := make([]string, 0, len(modelSet))
+			for modelID := range modelSet {
+				models = append(models, modelID)
+			}
+			sort.Strings(models)
 
-		for _, model := range models {
-			buffer.WriteString(fmt.Sprintf("## Model: %s\n\n", model))
-			buffer.WriteString("| Task | Provider | Result |\n")
-			buffer.WriteString("|------|----------|--------|\n")
+			for _, modelID := range models {
+				configurationLabel := agentModelLabel(agentID, modelID)
+				buffer.WriteString(fmt.Sprintf("### Configuration: %s\n\n", configurationLabel))
+				buffer.WriteString("| Task | Provider | Tool Use Shim | Result |\n")
+				buffer.WriteString("|------|----------|---------------|--------|\n")
 
-			modelSuccessCount := 0
-			modelFailCount := 0
-			modelResults := resultsByModel[model]
-			modelTotalCount := len(modelResults)
+				modelResults := append([]model.TaskResult(nil), resultsByAgentModel[agentID][modelID]...)
+				sort.Slice(modelResults, func(i, j int) bool {
+					if modelResults[i].Task != modelResults[j].Task {
+						return modelResults[i].Task < modelResults[j].Task
+					}
+					return modelResults[i].LLMConfig.EnableToolUseShim && !modelResults[j].LLMConfig.EnableToolUseShim
+				})
 
-			// Sort results within the model group for consistent output (e.g., by Task)
-			sort.Slice(modelResults, func(i, j int) bool {
-				return modelResults[i].Task < modelResults[j].Task
-			})
+				modelSuccessCount := 0
+				modelFailCount := 0
+				modelTotalCount := len(modelResults)
 
-			for _, result := range modelResults {
-				resultEmoji := "❌" // Default to failure
-				if strings.Contains(strings.ToLower(result.Result), "success") {
-					resultEmoji = "✅"
-					modelSuccessCount++
-				} else {
-					modelFailCount++
+				for _, result := range modelResults {
+					resultEmoji := "❌"
+					if strings.Contains(strings.ToLower(result.Result), "success") {
+						resultEmoji = "✅"
+						modelSuccessCount++
+					} else {
+						modelFailCount++
+					}
+
+					shimLabel := "disabled"
+					if result.LLMConfig.EnableToolUseShim {
+						shimLabel = "enabled"
+					}
+
+					buffer.WriteString(fmt.Sprintf("| %s | %s | %s | %s %s |\n",
+						result.Task,
+						normalizedProviderID(result.LLMConfig.ProviderID),
+						shimLabel,
+						resultEmoji, result.Result))
 				}
 
-				buffer.WriteString(fmt.Sprintf("| %s | %s | %s %s |\n",
-					result.Task,
-					result.LLMConfig.ProviderID,
-					resultEmoji, result.Result))
-			}
-
-			// Add summary for this model
-			buffer.WriteString(fmt.Sprintf("\n**%s Summary**\n\n", model))
-			buffer.WriteString(fmt.Sprintf("- Total: %d\n", modelTotalCount))
-			buffer.WriteString(fmt.Sprintf("- Success: %d (%d%%)\n", modelSuccessCount, calculatePercentage(modelSuccessCount, modelTotalCount)))
-			buffer.WriteString(fmt.Sprintf("- Fail: %d (%d%%)\n\n", modelFailCount, calculatePercentage(modelFailCount, modelTotalCount)))
-			// After the summary, print failure details
-			if config.ShowFailures {
-				printFailureDetails(&buffer, modelResults, model, false)
+				buffer.WriteString(fmt.Sprintf("\n**%s Summary**\n\n", configurationLabel))
+				buffer.WriteString(fmt.Sprintf("- Total: %d\n", modelTotalCount))
+				buffer.WriteString(fmt.Sprintf("- Success: %d (%d%%)\n", modelSuccessCount, calculatePercentage(modelSuccessCount, modelTotalCount)))
+				buffer.WriteString(fmt.Sprintf("- Fail: %d (%d%%)\n\n", modelFailCount, calculatePercentage(modelFailCount, modelTotalCount)))
+				if config.ShowFailures {
+					printFailureDetails(&buffer, modelResults, configurationLabel, true)
+				}
 			}
 		}
-
 	} else {
-		// Original detailed results grouped by tool use shim status
-		resultsByToolUseShim := make(map[string][]model.TaskResult)
-		for _, result := range results {
-			var toolUseShimStr string
-			if result.LLMConfig.EnableToolUseShim {
-				toolUseShimStr = "shim_enabled"
-			} else {
-				toolUseShimStr = "shim_disabled"
-			}
-			resultsByToolUseShim[toolUseShimStr] = append(resultsByToolUseShim[toolUseShimStr], result)
-		}
 		toolUseShimStrs := make([]string, 0, len(resultsByToolUseShim))
 		for toolUseShimStr := range resultsByToolUseShim {
 			toolUseShimStrs = append(toolUseShimStrs, toolUseShimStr)
@@ -586,30 +641,26 @@ func printMarkdownResults(config AnalyzeConfig, results []model.TaskResult, resu
 		sort.Strings(toolUseShimStrs)
 
 		for _, toolUseShimStr := range toolUseShimStrs {
-			toolUseShimStrResults := resultsByToolUseShim[toolUseShimStr]
-			// Print a header for this toolUseShimStr
+			toolUseShimStrResults := append([]model.TaskResult(nil), resultsByToolUseShim[toolUseShimStr]...)
 			buffer.WriteString(fmt.Sprintf("## Tool Use: %s\n\n", toolUseShimStr))
+			buffer.WriteString("| Task | Agent | Provider | Result |\n")
+			buffer.WriteString("|------|-------|----------|--------|\n")
 
-			// Create the table header
-			buffer.WriteString("| Task | Provider | Model | Result |\n")
-			buffer.WriteString("|------|----------|-------|--------|\n")
-
-			// Track success and failure counts for this strategy
 			successCount := 0
 			failCount := 0
 			totalCount := len(toolUseShimStrResults)
 
-			// Sort results within the group for consistent output (e.g., by Task)
 			sort.Slice(toolUseShimStrResults, func(i, j int) bool {
-				if toolUseShimStrResults[i].LLMConfig.ModelID != toolUseShimStrResults[j].LLMConfig.ModelID {
-					return toolUseShimStrResults[i].LLMConfig.ModelID < toolUseShimStrResults[j].LLMConfig.ModelID
+				agentI := agentModelLabel(toolUseShimStrResults[i].LLMConfig.AgentID, toolUseShimStrResults[i].LLMConfig.ModelID)
+				agentJ := agentModelLabel(toolUseShimStrResults[j].LLMConfig.AgentID, toolUseShimStrResults[j].LLMConfig.ModelID)
+				if agentI != agentJ {
+					return agentI < agentJ
 				}
 				return toolUseShimStrResults[i].Task < toolUseShimStrResults[j].Task
 			})
 
-			// Add each result as a row in the table
 			for _, result := range toolUseShimStrResults {
-				resultEmoji := "❌" // Default to failure
+				resultEmoji := "❌"
 				if strings.Contains(strings.ToLower(result.Result), "success") {
 					resultEmoji = "✅"
 					successCount++
@@ -617,20 +668,18 @@ func printMarkdownResults(config AnalyzeConfig, results []model.TaskResult, resu
 					failCount++
 				}
 
+				agentLabel := agentModelLabel(result.LLMConfig.AgentID, result.LLMConfig.ModelID)
 				buffer.WriteString(fmt.Sprintf("| %s | %s | %s | %s %s |\n",
 					result.Task,
-					result.LLMConfig.ProviderID,
-					result.LLMConfig.ModelID,
+					agentLabel,
+					normalizedProviderID(result.LLMConfig.ProviderID),
 					resultEmoji, result.Result))
 			}
 
-			// Add summary for this toolUseShimStr
 			buffer.WriteString(fmt.Sprintf("\n**%s Summary**\n\n", toolUseShimStr))
 			buffer.WriteString(fmt.Sprintf("- Total: %d\n", totalCount))
 			buffer.WriteString(fmt.Sprintf("- Success: %d (%d%%)\n", successCount, calculatePercentage(successCount, totalCount)))
 			buffer.WriteString(fmt.Sprintf("- Fail: %d (%d%%)\n\n", failCount, calculatePercentage(failCount, totalCount)))
-
-			// After the summary, print failure details
 			if config.ShowFailures {
 				printFailureDetails(&buffer, toolUseShimStrResults, toolUseShimStr, true)
 			}

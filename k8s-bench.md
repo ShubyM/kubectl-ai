@@ -2,89 +2,47 @@
 
 ## Model Performance Summary
 
-| Model | Success | Fail |
+| Agent | Success | Fail |
 |-------|---------|------|
-| gemini-2.5-flash | 17 | 8 |
-| gemini-2.5-pro | 23 | 2 |
-| **Total** | 40 | 10 |
+| gemini-cli (gemini-2.5-flash) | 2 | 1 |
+| gemini-cli (gemini-2.5-pro) | 3 | 0 |
+| **Total** | 5 | 1 |
 
 ## Overall Summary
 
-- Total Runs: 50
-- Overall Success: 40 (80%)
-- Overall Fail: 10 (20%)
+- Total Runs: 6
+- Overall Success: 5 (83%)
+- Overall Fail: 1 (17%)
 
-## Model: gemini-2.5-flash
+## Agent: gemini-cli
 
-| Task | Provider | Result |
-|------|----------|--------|
-| create-canary-deployment | gemini | ✅ success |
-| create-network-policy | gemini | ❌ fail |
-| create-pod | gemini | ✅ success |
-| create-pod-mount-configmaps | gemini | ✅ success |
-| create-pod-resources-limits | gemini | ✅ success |
-| create-simple-rbac | gemini | ✅ success |
-| debug-app-logs | gemini | ✅ success |
-| deployment-traffic-switch | gemini | ✅ success |
-| fix-crashloop | gemini | ❌ fail |
-| fix-image-pull | gemini | ❌ fail |
-| fix-oomkilled | gemini | ✅ success |
-| fix-pending-pod | gemini | ✅ success |
-| fix-probes | gemini | ❌ fail |
-| fix-rbac-wrong-resource | gemini | ✅ success |
-| fix-service-routing | gemini | ✅ success |
-| fix-service-with-no-endpoints | gemini | ✅ success |
-| horizontal-pod-autoscaler | gemini | ❌ fail |
-| list-images-for-pods | gemini | ✅ success |
-| multi-container-pod-communication | gemini | ✅ success |
-| resize-pvc | gemini | ❌ fail |
-| rolling-update-deployment | gemini | ❌ fail |
-| scale-deployment | gemini | ✅ success |
-| scale-down-deployment | gemini | ✅ success |
-| setup-dev-cluster | gemini | ✅ success |
-| statefulset-lifecycle | gemini | ❌ fail |
+### Configuration: gemini-cli (gemini-2.5-flash)
 
-**gemini-2.5-flash Summary**
+| Task | Provider | Tool Use Shim | Result |
+|------|----------|---------------|--------|
+| create-pod | gemini | disabled | ✅ success |
+| fix-crashloop | gemini | disabled | ❌ fail |
+| scale-deployment | gemini | disabled | ✅ success |
 
-- Total: 25
-- Success: 17 (68%)
-- Fail: 8 (32%)
+**gemini-cli (gemini-2.5-flash) Summary**
 
-## Model: gemini-2.5-pro
+- Total: 3
+- Success: 2 (67%)
+- Fail: 1 (33%)
 
-| Task | Provider | Result |
-|------|----------|--------|
-| create-canary-deployment | gemini | ✅ success |
-| create-network-policy | gemini | ❌ fail |
-| create-pod | gemini | ✅ success |
-| create-pod-mount-configmaps | gemini | ✅ success |
-| create-pod-resources-limits | gemini | ✅ success |
-| create-simple-rbac | gemini | ✅ success |
-| debug-app-logs | gemini | ✅ success |
-| deployment-traffic-switch | gemini | ✅ success |
-| fix-crashloop | gemini | ✅ success |
-| fix-image-pull | gemini | ✅ success |
-| fix-oomkilled | gemini | ✅ success |
-| fix-pending-pod | gemini | ✅ success |
-| fix-probes | gemini | ✅ success |
-| fix-rbac-wrong-resource | gemini | ✅ success |
-| fix-service-routing | gemini | ✅ success |
-| fix-service-with-no-endpoints | gemini | ✅ success |
-| horizontal-pod-autoscaler | gemini | ❌ fail |
-| list-images-for-pods | gemini | ✅ success |
-| multi-container-pod-communication | gemini | ✅ success |
-| resize-pvc | gemini | ✅ success |
-| rolling-update-deployment | gemini | ✅ success |
-| scale-deployment | gemini | ✅ success |
-| scale-down-deployment | gemini | ✅ success |
-| setup-dev-cluster | gemini | ✅ success |
-| statefulset-lifecycle | gemini | ✅ success |
+### Configuration: gemini-cli (gemini-2.5-pro)
 
-**gemini-2.5-pro Summary**
+| Task | Provider | Tool Use Shim | Result |
+|------|----------|---------------|--------|
+| create-pod | gemini | disabled | ✅ success |
+| fix-crashloop | gemini | disabled | ✅ success |
+| scale-deployment | gemini | disabled | ✅ success |
 
-- Total: 25
-- Success: 23 (92%)
-- Fail: 2 (8%)
+**gemini-cli (gemini-2.5-pro) Summary**
+
+- Total: 3
+- Success: 3 (100%)
+- Fail: 0 (0%)
 
 ---
 
