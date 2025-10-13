@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -83,6 +84,9 @@ func runEvaluation(ctx context.Context, config EvalConfig) error {
 
 		logger.Info("Wrote Kubeconfig to", "path", kubeconfigFile)
 		config.KubeConfig = kubeconfigFile.Name()
+		if err := os.Setenv("KUBECONFIG", config.KubeConfig); err != nil {
+			return fmt.Errorf("failed to set KUBECONFIG environment variable: %w", err)
+		}
 	}
 
 	if config.OutputDir == "" {
@@ -154,7 +158,33 @@ func runEvaluation(ctx context.Context, config EvalConfig) error {
 						log = logFile
 					}
 
+					start := time.Now()
+					fmt.Printf("\033[36mWorker %d: Started %s for %s\033[0m\n", workerID, llmConfig.ID, job.taskID)
+
+					done := make(chan struct{})
+					go func(workerID int, taskID, llmID string, start time.Time) {
+						ticker := time.NewTicker(5 * time.Second)
+						defer ticker.Stop()
+
+						for {
+							select {
+							case <-ticker.C:
+								fmt.Printf("\033[33mWorker %d: %s (%s) running for %s\033[0m\n", workerID, taskID, llmID, time.Since(start).Round(time.Second))
+							case <-done:
+								return
+							}
+						}
+					}(workerID, job.taskID, llmConfig.ID, start)
+
 					result := evaluateTask(ctx, config, job.taskID, job.task, llmConfig, log)
+
+					close(done)
+					fmt.Printf("\033[32mWorker %d: Completed %s for %s in %s\033[0m\n",
+						workerID,
+						llmConfig.ID,
+						job.taskID,
+						time.Since(start).Round(time.Second),
+					)
 
 					if taskOutputDir != "" {
 						if err := writeToYAMLFile(filepath.Join(taskOutputDir, "results.yaml"), result); err != nil {
@@ -268,7 +298,12 @@ func evaluateTask(ctx context.Context, config EvalConfig, taskID string, task Ta
 		LLMConfig: llmConfig,
 	}
 
-	timeout := 5 * time.Minute
+	maxTaskDuration := config.MaxAgentDuration
+	if maxTaskDuration <= 0 {
+		maxTaskDuration = 5 * time.Minute
+	}
+
+	timeout := maxTaskDuration
 	if task.Timeout != "" {
 		var err error
 		timeout, err = time.ParseDuration(task.Timeout)
@@ -276,6 +311,9 @@ func evaluateTask(ctx context.Context, config EvalConfig, taskID string, task Ta
 			result.Result = "fail"
 			result.Error = fmt.Sprintf("parsing timeout: %v", err)
 			return result
+		}
+		if timeout <= 0 || timeout > maxTaskDuration {
+			timeout = maxTaskDuration
 		}
 	}
 
@@ -293,6 +331,7 @@ func evaluateTask(ctx context.Context, config EvalConfig, taskID string, task Ta
 	x := &TaskExecution{
 		AgentBin:      config.AgentBin,
 		kubeConfig:    config.KubeConfig,
+		agentArgs:     config.AgentArgs,
 		result:        &result,
 		llmConfig:     llmConfig,
 		log:           multiWriter,
@@ -308,8 +347,8 @@ func evaluateTask(ctx context.Context, config EvalConfig, taskID string, task Ta
 		result.Error = err.Error()
 		return result
 	}
-	taskDir = taskDirAbs
-	x.taskDir = taskDir
+
+	x.taskDir = taskDirAbs
 
 	defer func() {
 		if err := x.runCleanup(context.Background()); err != nil {
@@ -428,6 +467,7 @@ type TaskExecution struct {
 	// AgentBin holds the path to the agent to execute
 	AgentBin string
 
+	agentArgs []string
 	llmConfig model.LLMConfig
 	result    *model.TaskResult
 	log       io.Writer
@@ -520,25 +560,25 @@ func (x *TaskExecution) runCleanup(ctx context.Context) error {
 }
 
 func (x *TaskExecution) runAgent(ctx context.Context) (string, error) {
-	tracePath := filepath.Join(x.taskOutputDir, "trace.yaml")
-
-	args := []string{
-		"--kubeconfig", x.kubeConfig,
-		"--llm-provider", x.llmConfig.ProviderID,
-		fmt.Sprintf("--enable-tool-use-shim=%t", x.llmConfig.EnableToolUseShim),
-		fmt.Sprintf("--quiet=%t", x.llmConfig.Quiet),
-		"--model", x.llmConfig.ModelID,
-		"--trace-path", tracePath,
-		"--skip-permissions",
-		"--show-tool-output",
-	}
+	args := append([]string{}, x.agentArgs...)
 
 	stdinReader, stdinWriter := io.Pipe()
+
+	workDir, err := os.MkdirTemp("", "k8s-bench-agent-")
+	if err != nil {
+		return "", fmt.Errorf("create agent workspace: %w", err)
+	}
+	if err := copyTaskWorkspace(x.taskDir, workDir); err != nil {
+		os.RemoveAll(workDir)
+		return "", err
+	}
+	defer os.RemoveAll(workDir)
 
 	cmd := exec.CommandContext(ctx,
 		x.AgentBin,
 		args...,
 	)
+	cmd.Dir = workDir
 	cmd.Stdin = stdinReader
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -549,7 +589,7 @@ func (x *TaskExecution) runAgent(ctx context.Context) (string, error) {
 	}
 
 	cmd.Env = append(os.Environ(), fmt.Sprintf("KUBECONFIG=%s", x.kubeConfig))
-
+	setProcessGroup(cmd)
 	go func() {
 		// TODO: Wait for idle between sending steps?
 		for _, step := range x.task.Script {
@@ -565,11 +605,79 @@ func (x *TaskExecution) runAgent(ctx context.Context) (string, error) {
 		stdinWriter.Close()
 	}()
 
-	if err := cmd.Run(); err != nil {
+	go func() {
+		<-ctx.Done()
+		stdinWriter.Close()
+	}()
+
+	if err := cmd.Start(); err != nil {
 		return "", err
 	}
 
-	return stdoutBuffer.String(), nil
+	waitErr := make(chan error, 1)
+	go func() {
+		waitErr <- cmd.Wait()
+	}()
+
+	select {
+	case err := <-waitErr:
+		if err != nil {
+			return "", err
+		}
+		return stdoutBuffer.String(), nil
+	case <-ctx.Done():
+		killProcessGroup(cmd)
+
+		exitTimer := time.NewTimer(5 * time.Second)
+		defer exitTimer.Stop()
+
+		select {
+		case <-waitErr:
+		case <-exitTimer.C:
+			killProcessGroup(cmd)
+			select {
+			case <-waitErr:
+			case <-time.After(5 * time.Second):
+				return "", fmt.Errorf("agent process failed to exit after cancellation: %w", ctx.Err())
+			}
+		}
+
+		return "", ctx.Err()
+	}
+}
+
+func copyTaskWorkspace(src, dst string) error {
+	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return fmt.Errorf("walk task dir: %w", err)
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return fmt.Errorf("rel task path: %w", err)
+		}
+		if rel == "." {
+			return nil
+		}
+		target := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0755)
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return fmt.Errorf("stat task file: %w", err)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read task file: %w", err)
+		}
+		if err := os.WriteFile(target, data, info.Mode()); err != nil {
+			return fmt.Errorf("write workspace file: %w", err)
+		}
+		return nil
+	})
 }
 
 func (x *TaskExecution) runCommand(cmd *exec.Cmd) error {

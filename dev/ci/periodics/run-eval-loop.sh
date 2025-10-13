@@ -100,7 +100,11 @@ do
   echo "**********"
 
   # Construct the arguments for the make command
-  TEST_ARGS="--enable-tool-use-shim=false --llm-provider=${PROVIDER} --models=${MODEL} --quiet --output-dir=${OUTPUT_DIR} --create-kind-cluster --concurrency ${CONCURRENCY} "
+  TEST_ARGS="--output-dir=${OUTPUT_DIR} --create-kind-cluster --concurrency ${CONCURRENCY} "
+  TEST_ARGS+="--agent-args=--enable-tool-use-shim=false "
+  TEST_ARGS+="--agent-args=--llm-provider=${PROVIDER} "
+  TEST_ARGS+="--agent-args=--model=${MODEL} "
+  TEST_ARGS+="--agent-args=--quiet "
 
   # Add task pattern if it was supplied
   if [ -n "$TASK_PATTERN" ]; then

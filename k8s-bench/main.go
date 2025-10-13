@@ -100,10 +100,12 @@ type EvalConfig struct {
 	TasksDir          string
 	TaskPattern       string
 	AgentBin          string
+	AgentArgs         []string
 	Concurrency       int
 	CreateKindCluster bool
 
-	OutputDir string
+	OutputDir        string
+	MaxAgentDuration time.Duration
 }
 
 type AnalyzeConfig struct {
@@ -154,7 +156,11 @@ func (f *Strings) String() string {
 }
 
 func (f *Strings) Set(s string) error {
-	*f = append(*f, s)
+	fields := strings.Fields(s)
+	if len(fields) == 0 {
+		return nil
+	}
+	*f = append(*f, fields...)
 	return nil
 }
 
@@ -183,7 +189,8 @@ func run(ctx context.Context) error {
 func runEvals(ctx context.Context) error {
 	start := time.Now()
 	config := EvalConfig{
-		TasksDir: "./tasks",
+		TasksDir:         "./tasks",
+		MaxAgentDuration: 5 * time.Minute,
 	}
 
 	// Set custom usage for 'run' subcommand
@@ -194,24 +201,23 @@ func runEvals(ctx context.Context) error {
 		flag.PrintDefaults()
 	}
 
-	llmProvider := "gemini"
-	modelList := ""
 	defaultKubeConfig := "~/.kube/config"
-	enableToolUseShim := false
-	quiet := true
+	config.KubeConfig = os.Getenv("KUBECONFIG")
+	var agentArgs Strings
 
 	flag.StringVar(&config.TasksDir, "tasks-dir", config.TasksDir, "Directory containing evaluation tasks")
-	flag.StringVar(&config.KubeConfig, "kubeconfig", config.KubeConfig, "Path to kubeconfig file")
 	flag.StringVar(&config.TaskPattern, "task-pattern", config.TaskPattern, "Pattern to filter tasks (e.g. 'pod' or 'redis')")
 	flag.StringVar(&config.AgentBin, "agent-bin", config.AgentBin, "Path to kubernetes agent binary")
-	flag.StringVar(&llmProvider, "llm-provider", llmProvider, "Specific LLM provider to evaluate (e.g. 'gemini' or 'ollama')")
-	flag.StringVar(&modelList, "models", modelList, "Comma-separated list of models to evaluate (e.g. 'gemini-1.0,gemini-2.0')")
-	flag.BoolVar(&enableToolUseShim, "enable-tool-use-shim", enableToolUseShim, "Enable tool use shim")
-	flag.BoolVar(&quiet, "quiet", quiet, "Quiet mode (non-interactive mode)")
+	flag.Var(&agentArgs, "agent-args", "Additional argument to pass to the agent (can be specified multiple times)")
 	flag.IntVar(&config.Concurrency, "concurrency", 0, "Number of tasks to run concurrently (0 = auto, 1 = sequential)")
 	flag.BoolVar(&config.CreateKindCluster, "create-kind-cluster", false, "Create a temporary kind cluster for the evaluation run")
 	flag.StringVar(&config.OutputDir, "output-dir", config.OutputDir, "Directory to write results to")
+	flag.DurationVar(&config.MaxAgentDuration, "agent-timeout", config.MaxAgentDuration, "Maximum duration to allow each agent run before terminating it")
 	flag.Parse()
+
+	if config.MaxAgentDuration <= 0 {
+		return fmt.Errorf("--agent-timeout must be greater than zero")
+	}
 
 	if config.KubeConfig == "" {
 		config.KubeConfig = defaultKubeConfig
@@ -223,39 +229,16 @@ func runEvals(ctx context.Context) error {
 	}
 	config.KubeConfig = expandedKubeconfig
 
-	defaultModels := map[string][]string{
-		"gemini": {"gemini-2.5-pro"},
+	if err := os.Setenv("KUBECONFIG", config.KubeConfig); err != nil {
+		return fmt.Errorf("failed to set KUBECONFIG environment variable: %w", err)
 	}
 
-	models := defaultModels
-	if modelList != "" {
-		if llmProvider == "" {
-			return fmt.Errorf("--llm-provider is required when --models is specified")
-		}
-		modelSlice := strings.Split(modelList, ",")
-		models = map[string][]string{
-			llmProvider: modelSlice,
-		}
-	}
-
-	for llmProviderID, models := range models {
-		var toolUseShimStr string
-		if enableToolUseShim {
-			toolUseShimStr = "shim_enabled"
-		} else {
-			toolUseShimStr = "shim_disabled"
-		}
-		for _, modelID := range models {
-			id := fmt.Sprintf("%s-%s-%s", toolUseShimStr, llmProviderID, modelID)
-			config.LLMConfigs = append(config.LLMConfigs, model.LLMConfig{
-				ID:                id,
-				ProviderID:        llmProviderID,
-				ModelID:           modelID,
-				EnableToolUseShim: enableToolUseShim,
-				Quiet:             quiet,
-			})
-		}
-	}
+	config.AgentArgs = append(config.AgentArgs, agentArgs...)
+	config.LLMConfigs = append(config.LLMConfigs, model.LLMConfig{
+		ID:         "agent",
+		ProviderID: "agent",
+		ModelID:    "default",
+	})
 
 	tasks, err := loadTasks(config)
 	if err != nil {
