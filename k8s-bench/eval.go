@@ -647,35 +647,54 @@ func (x *TaskExecution) runAgent(ctx context.Context) (string, error) {
 }
 
 func copyTaskWorkspace(src, dst string) error {
+	// Copy all things for setup and ignore everything else
 	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return fmt.Errorf("walk task dir: %w", err)
+			return err
 		}
+
 		rel, err := filepath.Rel(src, path)
 		if err != nil {
-			return fmt.Errorf("rel task path: %w", err)
+			return fmt.Errorf("failed to get relative path for %q: %w", path, err)
 		}
+
+		// Skip the root directory itself
 		if rel == "." {
 			return nil
 		}
-		target := filepath.Join(dst, rel)
-		if d.IsDir() {
-			return os.MkdirAll(target, 0755)
-		}
-		if !d.Type().IsRegular() {
+
+		// Skip files we don't want in the agent's workspace
+		base := filepath.Base(path)
+		if base == "verify.sh" || base == "cleanup.sh" || base == "task.yaml" {
 			return nil
 		}
-		info, err := d.Info()
-		if err != nil {
-			return fmt.Errorf("stat task file: %w", err)
+
+		target := filepath.Join(dst, rel)
+
+		if d.IsDir() {
+			// Get full info to preserve permissions
+			info, err := d.Info()
+			if err != nil {
+				return fmt.Errorf("failed to get info for directory %q: %w", path, err)
+			}
+			if err := os.MkdirAll(target, info.Mode()); err != nil {
+				return fmt.Errorf("failed to create directory %q: %w", target, err)
+			}
+		} else if d.Type().IsRegular() {
+			info, err := d.Info()
+			if err != nil {
+				return fmt.Errorf("failed to get info for file %q: %w", path, err)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return fmt.Errorf("failed to read file %q: %w", path, err)
+			}
+			// Make files writeable for the agent by adding user write permission
+			if err := os.WriteFile(target, data, info.Mode()|0200); err != nil {
+				return fmt.Errorf("failed to write file %q: %w", target, err)
+			}
 		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return fmt.Errorf("read task file: %w", err)
-		}
-		if err := os.WriteFile(target, data, info.Mode()); err != nil {
-			return fmt.Errorf("write workspace file: %w", err)
-		}
+
 		return nil
 	})
 }
