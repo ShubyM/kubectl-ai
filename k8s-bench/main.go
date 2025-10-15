@@ -24,6 +24,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/GoogleCloudPlatform/kubectl-ai/k8s-bench/pkg/model"
 	"sigs.k8s.io/yaml"
@@ -164,6 +165,96 @@ func (f *Strings) Set(s string) error {
 	return nil
 }
 
+type agentDetector func(agentBin string, agentArgs []string, cfg *model.LLMConfig) bool
+
+var agentDetectors = []agentDetector{
+	detectGeminiAgent,
+}
+
+func detectAgentLLMConfig(agentBin string, agentArgs []string) model.LLMConfig {
+	llmConfig := model.LLMConfig{
+		ID:         "agent",
+		ProviderID: "agent",
+		ModelID:    "default",
+	}
+
+	if agentBin == "" {
+		return llmConfig
+	}
+
+	binName := strings.ToLower(filepath.Base(agentBin))
+	for _, detector := range agentDetectors {
+		if detector(binName, agentArgs, &llmConfig) {
+			break
+		}
+	}
+
+	return llmConfig
+}
+
+func detectGeminiAgent(agentBin string, agentArgs []string, cfg *model.LLMConfig) bool {
+	if !strings.Contains(agentBin, "gemini") {
+		return false
+	}
+
+	cfg.ID = "gemini-cli"
+	cfg.ProviderID = "gemini"
+
+	if model := lookupFlagValue(agentArgs, "--model", "-m"); model != "" {
+		cfg.ModelID = model
+	}
+
+	if version := detectGeminiModelVersion(agentArgs); version != "" {
+		cfg.ModelVersion = version
+	}
+
+	return true
+}
+
+func lookupFlagValue(args []string, names ...string) string {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		for _, name := range names {
+			if strings.HasPrefix(arg, name+"=") {
+				return strings.TrimPrefix(arg, name+"=")
+			}
+			if arg == name && i+1 < len(args) {
+				return args[i+1]
+			}
+		}
+	}
+	return ""
+}
+
+func detectGeminiModelVersion(args []string) string {
+	if version := lookupFlagValue(args, "--model-version"); version != "" {
+		return version
+	}
+	if version := lookupFlagValue(args, "--api-version"); version != "" {
+		return version
+	}
+	if options := lookupFlagValue(args, "--client-options"); options != "" {
+		for _, field := range strings.FieldsFunc(options, func(r rune) bool {
+			switch r {
+			case ',', ';':
+				return true
+			default:
+				return unicode.IsSpace(r)
+			}
+		}) {
+			if strings.Contains(field, "=") {
+				parts := strings.SplitN(field, "=", 2)
+				key := strings.ToLower(parts[0])
+				value := parts[1]
+				if key == "apiversion" || key == "version" || key == "modelversion" {
+					return value
+				}
+			}
+		}
+	}
+	return ""
+}
+
 func run(ctx context.Context) error {
 	// No need to check for help flags here anymore
 
@@ -234,11 +325,7 @@ func runEvals(ctx context.Context) error {
 	}
 
 	config.AgentArgs = append(config.AgentArgs, agentArgs...)
-	config.LLMConfigs = append(config.LLMConfigs, model.LLMConfig{
-		ID:         "agent",
-		ProviderID: "agent",
-		ModelID:    "default",
-	})
+	config.LLMConfigs = append(config.LLMConfigs, detectAgentLLMConfig(config.AgentBin, config.AgentArgs))
 
 	tasks, err := loadTasks(config)
 	if err != nil {
