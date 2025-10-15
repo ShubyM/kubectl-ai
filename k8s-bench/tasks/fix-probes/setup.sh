@@ -4,6 +4,8 @@
 kubectl delete namespace health-check --ignore-not-found
 kubectl create namespace health-check
 
+TIMEOUT="120s"
+
 # Create a deployment with problematic health checks
 cat <<YAML | kubectl apply -f -
 apiVersion: apps/v1
@@ -46,4 +48,10 @@ kubectl create service clusterip webapp -n health-check --tcp=80:80
 
 # Wait for the pod to start and begin restarting due to failed probes
 echo "Waiting for pod to start and begin failing health checks..."
-kubectl wait --for=condition=Available=False --timeout=30s deployment/webapp -n health-check || true
+if ! kubectl wait --for=condition=Available=False --timeout=$TIMEOUT deployment/webapp -n health-check; then
+    echo "Error: Timed out waiting for the deployment to become unavailable."
+    exit 1
+fi
+
+echo "Setup successful: Deployment is no longer available."
+exit 0

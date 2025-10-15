@@ -4,6 +4,8 @@
 kubectl delete namespace ns1 --ignore-not-found
 kubectl delete namespace ns2 --ignore-not-found
 
+TIMEOUT="120s"
+
 # Wait for namespaces to be fully deleted
 echo "Waiting for namespaces to be fully deleted..."
 while kubectl get namespace ns1 2>/dev/null || kubectl get namespace ns2 2>/dev/null; do
@@ -28,9 +30,9 @@ kubectl run curl-ns2 -n ns2 --image=curlimages/curl --command -- sleep 3600
 
 # Wait for pods to be ready
 echo "Waiting for pods to be ready..."
-kubectl wait --for=condition=Ready pod/httpd-ns1 -n ns1 --timeout=60s
-kubectl wait --for=condition=Ready pod/httpd-ns2 -n ns2 --timeout=60s
-kubectl wait --for=condition=Ready pod/curl-ns1 -n ns1 --timeout=60s
-kubectl wait --for=condition=Ready pod/curl-ns2 -n ns2 --timeout=60s
+kubectl wait --for=condition=Ready pod/httpd-ns1 -n ns1 --timeout=$TIMEOUT
+kubectl wait --for=condition=Ready pod/httpd-ns2 -n ns2 --timeout=$TIMEOUT
+kubectl wait --for=condition=Ready pod/curl-ns1 -n ns1 --timeout=$TIMEOUT
+kubectl wait --for=condition=Ready pod/curl-ns2 -n ns2 --timeout=$TIMEOUT
 
 echo "Setup completed" 

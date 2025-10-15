@@ -55,12 +55,24 @@ func runEvaluation(ctx context.Context, config EvalConfig) error {
 		_ = deleteCmd.Run() // We don't care if this fails (e.g. cluster doesn't exist)
 
 		// Create cluster
-		createCmd := exec.Command("kind", "create", "cluster", "--name", clusterName, "--wait", "5m")
-		logger.Info("Creating kind cluster", "name", clusterName)
-		createCmd.Stdout = os.Stdout
-		createCmd.Stderr = os.Stderr
-		if err := createCmd.Run(); err != nil {
-			return fmt.Errorf("failed to create kind cluster: %w", err)
+		var createErr error
+		for retry := range 3 {
+			if retry > 0 {
+				logger.Info("Retrying cluster creation", "attempt", retry+1)
+				time.Sleep(5 * time.Second)
+			}
+			createCmd := exec.Command("kind", "create", "cluster", "--name", clusterName, "--wait", "5m")
+			logger.Info("Creating kind cluster", "name", clusterName)
+			createCmd.Stdout = os.Stdout
+			createCmd.Stderr = os.Stderr
+			createErr = createCmd.Run()
+			if createErr == nil {
+				break
+			}
+			logger.Error(createErr, "failed to create kind cluster, retrying...", "attempt", retry+1)
+		}
+		if createErr != nil {
+			return fmt.Errorf("failed to create kind cluster after multiple retries: %w", createErr)
 		}
 
 		// Get kubeconfig

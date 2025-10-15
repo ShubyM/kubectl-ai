@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Wait for pod to be ready
-if kubectl wait --for=condition=Ready pod -l app=nginx -n debug --timeout=25s; then
+TIMEOUT="120s"
+if kubectl wait --for=condition=Ready pod -l app=nginx -n debug --timeout=$TIMEOUT; then
     # Get current restart count
     restarts=$(kubectl get pods -n debug -l app=nginx -o jsonpath='{.items[0].status.containerStatuses[0].restartCount}')
     

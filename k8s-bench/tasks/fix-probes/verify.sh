@@ -3,8 +3,10 @@
 # Check if the pod is in Running state with Ready status
 echo "Checking if the pod is running and ready..."
 
-# Wait up to 30 seconds for pod to become ready using kubectl wait
-if kubectl wait --for=condition=Ready pod -l app=webapp -n health-check --timeout=30s; then
+TIMEOUT="120s"
+
+# Wait up to TIMEOUT seconds for pod to become ready using kubectl wait
+if kubectl wait --for=condition=Ready pod -l app=webapp -n health-check --timeout=$TIMEOUT; then
   echo "Success: Pod is now Ready"
     
     # Check if probes exist at all
