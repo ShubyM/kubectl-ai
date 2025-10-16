@@ -36,43 +36,26 @@ import (
 
 func runEvaluation(ctx context.Context, config EvalConfig) error {
 	logger := klog.FromContext(ctx)
-	if config.CreateKindCluster {
+	if config.ClusterCreationPolicy != DoNotCreate {
 		clusterName := "k8s-bench-eval"
-		logger.Info("Creating kind cluster for evaluation run", "name", clusterName)
-
-		// Defer cluster deletion
-		defer func() {
-			logger.Info("Deleting kind cluster", "name", clusterName)
-			deleteCmd := exec.Command("kind", "delete", "cluster", "--name", clusterName)
-			// Use a new context for cleanup, as the original might have been cancelled
-			if err := deleteCmd.Run(); err != nil {
-				logger.Error(err, "failed to delete kind cluster", "name", clusterName)
-			}
-		}()
-
-		// Delete if it exists, ignore error
-		deleteCmd := exec.Command("kind", "delete", "cluster", "--name", clusterName)
-		_ = deleteCmd.Run() // We don't care if this fails (e.g. cluster doesn't exist)
-
-		// Create cluster
-		var createErr error
-		for retry := range 3 {
-			if retry > 0 {
-				logger.Info("Retrying cluster creation", "attempt", retry+1)
-				time.Sleep(5 * time.Second)
-			}
-			createCmd := exec.Command("kind", "create", "cluster", "--name", clusterName, "--wait", "5m")
-			logger.Info("Creating kind cluster", "name", clusterName)
-			createCmd.Stdout = os.Stdout
-			createCmd.Stderr = os.Stderr
-			createErr = createCmd.Run()
-			if createErr == nil {
-				break
-			}
-			logger.Error(createErr, "failed to create kind cluster, retrying...", "attempt", retry+1)
+		clusterExists, err := kindClusterExists(clusterName)
+		if err != nil {
+			return fmt.Errorf("failed to check if kind cluster exists: %w", err)
 		}
-		if createErr != nil {
-			return fmt.Errorf("failed to create kind cluster after multiple retries: %w", createErr)
+
+		if config.ClusterCreationPolicy == AlwaysCreate && clusterExists {
+			logger.Info("Deleting existing kind cluster for evaluation run", "name", clusterName)
+			if err := deleteKindCluster(clusterName); err != nil {
+				return fmt.Errorf("failed to delete existing kind cluster: %w", err)
+			}
+			clusterExists = false
+		}
+
+		if !clusterExists {
+			logger.Info("Creating kind cluster for evaluation run", "name", clusterName)
+			if err := createKindCluster(clusterName); err != nil {
+				return fmt.Errorf("failed to create kind cluster: %w", err)
+			}
 		}
 
 		// Get kubeconfig
@@ -94,7 +77,7 @@ func runEvaluation(ctx context.Context, config EvalConfig) error {
 		}
 		kubeconfigFile.Close()
 
-		logger.Info("Wrote Kubeconfig to", "path", kubeconfigFile)
+		logger.Info("Wrote Kubeconfig to", "path", kubeconfigFile.Name())
 		config.KubeConfig = kubeconfigFile.Name()
 		if err := os.Setenv("KUBECONFIG", config.KubeConfig); err != nil {
 			return fmt.Errorf("failed to set KUBECONFIG environment variable: %w", err)
@@ -643,51 +626,43 @@ func (x *TaskExecution) runAgent(ctx context.Context) (string, error) {
 }
 
 func copyTaskWorkspace(src, dst string) error {
-	// Copy all things for setup and ignore everything else
-	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
+	artifactsDir := filepath.Join(src, "artifacts")
+
+	if _, err := os.Stat(artifactsDir); os.IsNotExist(err) {
+		return nil
+	}
+
+	return filepath.WalkDir(artifactsDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 
-		rel, err := filepath.Rel(src, path)
+		rel, err := filepath.Rel(artifactsDir, path)
 		if err != nil {
 			return fmt.Errorf("failed to get relative path for %q: %w", path, err)
 		}
 
-		// Skip the root directory itself
 		if rel == "." {
-			return nil
-		}
-
-		// Skip files we don't want in the agent's workspace
-		base := filepath.Base(path)
-		if base == "verify.sh" || base == "cleanup.sh" || base == "setup.sh" || base == "task.yaml" {
 			return nil
 		}
 
 		target := filepath.Join(dst, rel)
 
 		if d.IsDir() {
-			// Get full info to preserve permissions
 			info, err := d.Info()
 			if err != nil {
 				return fmt.Errorf("failed to get info for directory %q: %w", path, err)
 			}
-			if err := os.MkdirAll(target, info.Mode()); err != nil {
-				return fmt.Errorf("failed to create directory %q: %w", target, err)
-			}
+			return os.MkdirAll(target, info.Mode())
 		} else if d.Type().IsRegular() {
 			info, err := d.Info()
 			if err != nil {
 				return fmt.Errorf("failed to get info for file %q: %w", path, err)
 			}
-			data, err := os.ReadFile(path)
-			if err != nil {
+			if data, err := os.ReadFile(path); err != nil {
 				return fmt.Errorf("failed to read file %q: %w", path, err)
-			}
-			// Make files writeable for the agent by adding user write permission
-			if err := os.WriteFile(target, data, info.Mode()|0200); err != nil {
-				return fmt.Errorf("failed to write file %q: %w", target, err)
+			} else {
+				return os.WriteFile(target, data, info.Mode()|0200) // Make files writeable for the agent
 			}
 		}
 
