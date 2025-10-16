@@ -173,24 +173,8 @@ func runEvaluation(ctx context.Context, config EvalConfig) error {
 					start := time.Now()
 					fmt.Printf("\033[36mWorker %d: Started %s for %s\033[0m\n", workerID, llmConfig.ID, job.taskID)
 
-					done := make(chan struct{})
-					go func(workerID int, taskID, llmID string, start time.Time) {
-						ticker := time.NewTicker(5 * time.Second)
-						defer ticker.Stop()
-
-						for {
-							select {
-							case <-ticker.C:
-								fmt.Printf("\033[33mWorker %d: %s (%s) running for %s\033[0m\n", workerID, taskID, llmID, time.Since(start).Round(time.Second))
-							case <-done:
-								return
-							}
-						}
-					}(workerID, job.taskID, llmConfig.ID, start)
-
 					result := evaluateTask(ctx, config, job.taskID, job.task, llmConfig, log)
 
-					close(done)
 					fmt.Printf("\033[32mWorker %d: Completed %s for %s in %s\033[0m\n",
 						workerID,
 						llmConfig.ID,
@@ -677,7 +661,7 @@ func copyTaskWorkspace(src, dst string) error {
 
 		// Skip files we don't want in the agent's workspace
 		base := filepath.Base(path)
-		if base == "verify.sh" || base == "cleanup.sh" || base == "task.yaml" {
+		if base == "verify.sh" || base == "cleanup.sh" || base == "setup.sh" || base == "task.yaml" {
 			return nil
 		}
 
