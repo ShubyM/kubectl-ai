@@ -106,7 +106,7 @@ do
   echo "**********"
 
   # Construct the arguments for the make command
-  TEST_ARGS="--output-dir=${OUTPUT_DIR} --create-kind-cluster --concurrency ${CONCURRENCY} "
+  TEST_ARGS="--output-dir=${OUTPUT_DIR} --cluster-creation-policy=${CLUSTER_CREATION_POLICY} --concurrency ${CONCURRENCY} "
   TEST_ARGS+="--agent-args=--enable-tool-use-shim=false "
   TEST_ARGS+="--agent-args=--llm-provider=${PROVIDER} "
   TEST_ARGS+="--agent-args=--model=${MODEL} "

@@ -345,11 +345,11 @@ func runEvals(ctx context.Context) error {
 		flag.PrintDefaults()
 	}
 
-	defaultKubeConfig := "~/.kube/config"
-	config.KubeConfig = os.Getenv("KUBECONFIG")
 	var agentArgs Strings
+	var kubeConfigFlag string
 
 	flag.StringVar(&config.TasksDir, "tasks-dir", config.TasksDir, "Directory containing evaluation tasks")
+	flag.StringVar(&kubeConfigFlag, "kubeconfig", "", "Path to the kubeconfig file to use for the evaluation")
 	flag.StringVar(&config.TaskPattern, "task-pattern", config.TaskPattern, "Pattern to filter tasks (e.g. 'pod' or 'redis')")
 	flag.StringVar(&config.AgentBin, "agent-bin", config.AgentBin, "Path to kubernetes agent binary")
 	flag.Var(&agentArgs, "agent-args", "Additional argument to pass to the agent (can be specified multiple times)")
@@ -363,8 +363,13 @@ func runEvals(ctx context.Context) error {
 		return fmt.Errorf("--agent-timeout must be greater than zero")
 	}
 
-	if config.KubeConfig == "" {
-		config.KubeConfig = defaultKubeConfig
+	// Determine KubeConfig path: flag > env var > default
+	if kubeConfigFlag != "" {
+		config.KubeConfig = kubeConfigFlag
+	} else if os.Getenv("KUBECONFIG") != "" {
+		config.KubeConfig = os.Getenv("KUBECONFIG")
+	} else {
+		config.KubeConfig = "~/.kube/config"
 	}
 
 	expandedKubeconfig, err := expandPath(config.KubeConfig)
