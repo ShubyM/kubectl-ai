@@ -111,6 +111,7 @@ do
   TEST_ARGS+="--agent-args=--llm-provider=${PROVIDER} "
   TEST_ARGS+="--agent-args=--model=${MODEL} "
   TEST_ARGS+="--agent-args=--quiet "
+  TEST_ARGS+="--agent-args=--skip-permissions "
 
   # Add task pattern if it was supplied
   if [ -n "$TASK_PATTERN" ]; then
