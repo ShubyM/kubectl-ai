@@ -23,6 +23,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -221,6 +222,7 @@ func (f *Strings) Set(s string) error {
 type agentDetector func(agentBin string, agentArgs []string, cfg *model.LLMConfig) bool
 
 var agentDetectors = []agentDetector{
+	detectKubectlAIAgent,
 	detectGeminiAgent,
 }
 
@@ -243,6 +245,35 @@ func detectAgentLLMConfig(agentBin string, agentArgs []string) model.LLMConfig {
 	}
 
 	return llmConfig
+}
+
+const (
+	kubectlAIBinaryToken       = "kubectl-ai"
+	kubectlAIDefaultProviderID = "gemini"
+	kubectlAIDefaultModelID    = "gemini-2.5-pro"
+)
+
+func detectKubectlAIAgent(agentBin string, agentArgs []string, cfg *model.LLMConfig) bool {
+	if !strings.Contains(agentBin, kubectlAIBinaryToken) {
+		return false
+	}
+
+	cfg.ID = kubectlAIBinaryToken
+
+	cfg.ProviderID = kubectlAIDefaultProviderID
+	if provider := lookupFlagValue(agentArgs, "--llm-provider"); provider != "" {
+		cfg.ProviderID = provider
+	}
+
+	cfg.ModelID = kubectlAIDefaultModelID
+	if modelID := lookupFlagValue(agentArgs, "--model", "-m"); modelID != "" {
+		cfg.ModelID = modelID
+	}
+
+	cfg.EnableToolUseShim = kubectlAIBoolFlag(agentArgs, "--enable-tool-use-shim")
+	cfg.Quiet = kubectlAIBoolFlag(agentArgs, "--quiet")
+
+	return true
 }
 
 func detectGeminiAgent(agentBin string, agentArgs []string, cfg *model.LLMConfig) bool {
@@ -277,6 +308,30 @@ func lookupFlagValue(args []string, names ...string) string {
 		}
 	}
 	return ""
+}
+
+func kubectlAIBoolFlag(args []string, name string) bool {
+	value := false
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+
+		switch {
+		case arg == name:
+			value = true
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				if parsed, err := strconv.ParseBool(args[i+1]); err == nil {
+					value = parsed
+				}
+			}
+		case strings.HasPrefix(arg, name+"="):
+			if parsed, err := strconv.ParseBool(strings.TrimPrefix(arg, name+"=")); err == nil {
+				value = parsed
+			}
+		}
+	}
+
+	return value
 }
 
 func detectGeminiModelVersion(args []string) string {

@@ -541,6 +541,13 @@ func (x *TaskExecution) runCleanup(ctx context.Context) error {
 func (x *TaskExecution) runAgent(ctx context.Context) (string, error) {
 	args := append([]string{}, x.agentArgs...)
 
+	if x.taskOutputDir != "" {
+		tracePath := filepath.Join(x.taskOutputDir, "trace.yaml")
+		if lookupFlagValue(args, "--trace-path") == "" {
+			args = append(args, fmt.Sprintf("--trace-path=%s", tracePath))
+		}
+	}
+
 	stdinReader, stdinWriter := io.Pipe()
 
 	workDir, err := os.MkdirTemp("", "k8s-bench-agent-")
