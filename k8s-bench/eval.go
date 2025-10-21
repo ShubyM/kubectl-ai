@@ -541,7 +541,7 @@ func (x *TaskExecution) runCleanup(ctx context.Context) error {
 func (x *TaskExecution) runAgent(ctx context.Context) (string, error) {
 	args := append([]string{}, x.agentArgs...)
 
-	if x.taskOutputDir != "" {
+	if x.taskOutputDir != "" && strings.Contains(x.AgentBin, "kubectl-ai") {
 		tracePath := filepath.Join(x.taskOutputDir, "trace.yaml")
 		if lookupFlagValue(args, "--trace-path") == "" {
 			args = append(args, fmt.Sprintf("--trace-path=%s", tracePath))
