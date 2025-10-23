@@ -277,12 +277,8 @@ func evaluateTask(ctx context.Context, config EvalConfig, taskID string, task Ta
 		LLMConfig: llmConfig,
 	}
 
-	maxTaskDuration := config.MaxAgentDuration
-	if maxTaskDuration <= 0 {
-		maxTaskDuration = 5 * time.Minute
-	}
-
-	timeout := maxTaskDuration
+	// Timeout limit for the whole task (setup, agent actions, verify)
+	timeout := 10 * time.Minute
 	if task.Timeout != "" {
 		var err error
 		timeout, err = time.ParseDuration(task.Timeout)
@@ -290,9 +286,6 @@ func evaluateTask(ctx context.Context, config EvalConfig, taskID string, task Ta
 			result.Result = "fail"
 			result.Error = fmt.Sprintf("parsing timeout: %v", err)
 			return result
-		}
-		if timeout <= 0 || timeout > maxTaskDuration {
-			timeout = maxTaskDuration
 		}
 	}
 
@@ -350,7 +343,25 @@ func evaluateTask(ctx context.Context, config EvalConfig, taskID string, task Ta
 			return result
 		}
 		// Unexpected error
-		result.Error = err.Error()
+		result.Result = "error"
+		const maxErrLogLines = 3
+		logString := logBuffer.String()
+		logTail, truncated := getLastNLines(logString, maxErrLogLines)
+		// build log file path
+		shimSegment := "shim_disabled"
+		if x.llmConfig.EnableToolUseShim {
+			shimSegment = "shim_enabled"
+		}
+		logPath := filepath.Join(
+			config.OutputDir,
+			taskID,
+			shimSegment+"-"+x.llmConfig.ProviderID+"-"+x.llmConfig.ModelID,
+		)
+		errorMessage := fmt.Sprintf("agent encountered error: %v\n---LOG---\n%s", err, logTail)
+		if truncated {
+			errorMessage += fmt.Sprintf("\n... (log truncated, full log at %s)", logPath)
+		}
+		result.Error = errorMessage
 		return result
 	}
 
