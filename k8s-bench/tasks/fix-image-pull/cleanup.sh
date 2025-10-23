@@ -1,2 +1,2 @@
 #!/usr/bin/env bash
-kubectl delete namespace debug 
+kubectl delete namespace deployment
