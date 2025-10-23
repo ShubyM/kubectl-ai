@@ -1,0 +1,190 @@
+[
+  {
+    "id": "codex-custom-custom-model",
+    "agent": "codex",
+    "model": "custom-model",
+    "model_provider": "custom",
+    "total": 25,
+    "num_success": 0,
+    "num_failed": 0,
+    "num_error": 25,
+    "percentage": 0,
+    "tasks": [
+      {
+        "name": "create-canary-deployment",
+        "provider": "custom",
+        "model": "custom-model",
+        "result": "",
+        "error": "exit status 1"
+      },
+      {
+        "name": "create-network-policy",
+        "provider": "custom",
+        "model": "custom-model",
+        "result": "",
+        "error": "exit status 1"
+      },
+      {
+        "name": "create-pod",
+        "provider": "custom",
+        "model": "custom-model",
+        "result": "",
+        "error": "exit status 1"
+      },
+      {
+        "name": "create-pod-mount-configmaps",
+        "provider": "custom",
+        "model": "custom-model",
+        "result": "",
+        "error": "exit status 1"
+      },
+      {
+        "name": "create-pod-resources-limits",
+        "provider": "custom",
+        "model": "custom-model",
+        "result": "",
+        "error": "exit status 1"
+      },
+      {
+        "name": "create-simple-rbac",
+        "provider": "custom",
+        "model": "custom-model",
+        "result": "",
+        "error": "exit status 1"
+      },
+      {
+        "name": "debug-app-logs",
+        "provider": "custom",
+        "model": "custom-model",
+        "result": "",
+        "error": "running command /root/kubectl-ai/k8s-bench/.build/debug-app-logs/codex/workspace/setup.sh: exit status 1"
+      },
+      {
+        "name": "deployment-traffic-switch",
+        "provider": "custom",
+        "model": "custom-model",
+        "result": "",
+        "error": "exit status 1"
+      },
+      {
+        "name": "fix-crashloop",
+        "provider": "custom",
+        "model": "custom-model",
+        "result": "",
+        "error": "exit status 1"
+      },
+      {
+        "name": "fix-image-pull",
+        "provider": "custom",
+        "model": "custom-model",
+        "result": "",
+        "error": "exit status 1"
+      },
+      {
+        "name": "fix-oomkilled",
+        "provider": "custom",
+        "model": "custom-model",
+        "result": "",
+        "error": "exit status 1"
+      },
+      {
+        "name": "fix-pending-pod",
+        "provider": "custom",
+        "model": "custom-model",
+        "result": "",
+        "error": "exit status 1"
+      },
+      {
+        "name": "fix-probes",
+        "provider": "custom",
+        "model": "custom-model",
+        "result": "",
+        "error": "exit status 1"
+      },
+      {
+        "name": "fix-rbac-wrong-resource",
+        "provider": "custom",
+        "model": "custom-model",
+        "result": "",
+        "error": "exit status 1"
+      },
+      {
+        "name": "fix-service-routing",
+        "provider": "custom",
+        "model": "custom-model",
+        "result": "",
+        "error": "exit status 1"
+      },
+      {
+        "name": "fix-service-with-no-endpoints",
+        "provider": "custom",
+        "model": "custom-model",
+        "result": "",
+        "error": "exit status 1"
+      },
+      {
+        "name": "horizontal-pod-autoscaler",
+        "provider": "custom",
+        "model": "custom-model",
+        "result": "",
+        "error": "exit status 1"
+      },
+      {
+        "name": "list-images-for-pods",
+        "provider": "custom",
+        "model": "custom-model",
+        "result": "",
+        "error": "running command /root/kubectl-ai/k8s-bench/.build/list-images-for-pods/codex/workspace/setup.sh: exit status 1"
+      },
+      {
+        "name": "multi-container-pod-communication",
+        "provider": "custom",
+        "model": "custom-model",
+        "result": "",
+        "error": "exit status 1"
+      },
+      {
+        "name": "resize-pvc",
+        "provider": "custom",
+        "model": "custom-model",
+        "result": "",
+        "error": "exit status 1"
+      },
+      {
+        "name": "rolling-update-deployment",
+        "provider": "custom",
+        "model": "custom-model",
+        "result": "",
+        "error": "exit status 1"
+      },
+      {
+        "name": "scale-deployment",
+        "provider": "custom",
+        "model": "custom-model",
+        "result": "",
+        "error": "exit status 1"
+      },
+      {
+        "name": "scale-down-deployment",
+        "provider": "custom",
+        "model": "custom-model",
+        "result": "",
+        "error": "exit status 1"
+      },
+      {
+        "name": "setup-dev-cluster",
+        "provider": "custom",
+        "model": "custom-model",
+        "result": "",
+        "error": "exit status 1"
+      },
+      {
+        "name": "statefulset-lifecycle",
+        "provider": "custom",
+        "model": "custom-model",
+        "result": "",
+        "error": "exit status 1"
+      }
+    ]
+  }
+]

@@ -151,8 +151,9 @@ func main() {
 func printUsage() {
 	fmt.Fprintf(os.Stderr, "Usage: %s <command> [options]\n\n", os.Args[0])
 	fmt.Fprintf(os.Stderr, "Commands:\n")
-	fmt.Fprintf(os.Stderr, "  run       Run evaluation benchmarks\n")
-	fmt.Fprintf(os.Stderr, "  analyze   Analyze results from previous benchmark runs\n\n")
+        fmt.Fprintf(os.Stderr, "  run       Run evaluation benchmarks\n")
+        fmt.Fprintf(os.Stderr, "  analyze   Analyze results from previous benchmark runs\n")
+        fmt.Fprintf(os.Stderr, "  export    Export aggregated benchmark results to JSON\n\n")
 	fmt.Fprintf(os.Stderr, "Run '%s <command> --help' for more information on a command.\n", os.Args[0])
 }
 
@@ -224,11 +225,13 @@ func run(ctx context.Context) error {
 	switch subCommand {
 	case "run":
 		return runEvals(ctx)
-	case "analyze":
-		return runAnalyze()
+        case "analyze":
+                return runAnalyze()
+        case "export":
+                return runExport()
 	default:
 		printUsage()
-		return fmt.Errorf("unknown subcommand: %s, valid options are 'run' or 'analyze'", subCommand)
+                return fmt.Errorf("unknown subcommand: %s, valid options are 'run', 'analyze', or 'export'", subCommand)
 	}
 }
 
