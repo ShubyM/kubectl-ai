@@ -16,9 +16,8 @@ package tools
 
 import (
 	"context"
-	"os"
-	"os/exec"
-	"runtime"
+	"path/filepath"
+	"strings"
 
 	"github.com/GoogleCloudPlatform/kubectl-ai/gollm"
 )
@@ -95,8 +94,8 @@ Possible values:
 }
 
 func (t *Kubectl) Run(ctx context.Context, args map[string]any) (any, error) {
-	kubeconfig := ctx.Value(KubeconfigKey).(string)
-	workDir := ctx.Value(WorkDirKey).(string)
+	workDir, _ := ctx.Value(WorkDirKey).(string)
+	kubeconfig, _ := ctx.Value(KubeconfigKey).(string)
 
 	// Add nil check for command
 	commandVal, ok := args["command"]
@@ -109,32 +108,22 @@ func (t *Kubectl) Run(ctx context.Context, args map[string]any) (any, error) {
 		return &ExecResult{Error: "kubectl command must be a string"}, nil
 	}
 
-	return runKubectlCommand(ctx, command, workDir, kubeconfig)
-}
-
-func runKubectlCommand(ctx context.Context, command, workDir, kubeconfig string) (*ExecResult, error) {
-	// Check for interactive commands before proceeding
-	if isInteractive, err := IsInteractiveCommand(command); isInteractive {
-		return &ExecResult{Error: err.Error()}, nil
-	}
-
-	var cmd *exec.Cmd
-	if runtime.GOOS == "windows" {
-		cmd = exec.CommandContext(ctx, os.Getenv("COMSPEC"), "/c", command)
-	} else {
-		cmd = exec.CommandContext(ctx, lookupBashBin(), "-c", command)
-	}
-	cmd.Env = os.Environ()
-	cmd.Dir = workDir
+	executor := executorFromContext(ctx)
+	var env []string
 	if kubeconfig != "" {
-		kubeconfig, err := expandShellVar(kubeconfig)
+		expanded, err := expandShellVar(kubeconfig)
 		if err != nil {
 			return nil, err
 		}
-		cmd.Env = append(cmd.Env, "KUBECONFIG="+kubeconfig)
+		env = append(env, "KUBECONFIG="+expanded)
 	}
 
-	return executeCommand(ctx, cmd)
+	isInteractive, err := t.IsInteractive(args)
+	if err != nil {
+		return nil, err
+	}
+
+	return runCommandWithExecutor(ctx, executor, command, workDir, env, isInteractive)
 }
 
 func (t *Kubectl) IsInteractive(args map[string]any) (bool, error) {
@@ -148,7 +137,20 @@ func (t *Kubectl) IsInteractive(args map[string]any) (bool, error) {
 		return false, nil
 	}
 
-	return IsInteractiveCommand(command)
+	words := strings.Fields(command)
+	if len(words) == 0 {
+		return false, nil
+	}
+	base := filepath.Base(words[0])
+	if base != "kubectl" {
+		return false, nil
+	}
+
+	isExec := strings.Contains(command, " exec ") && strings.Contains(command, " -it")
+	isPortForward := strings.Contains(command, " port-forward ")
+	isEdit := strings.Contains(command, " edit ")
+
+	return isExec || isPortForward || isEdit, nil
 }
 
 // CheckModifiesResource determines if the command modifies kubernetes resources
@@ -162,3 +164,4 @@ func (t *Kubectl) CheckModifiesResource(args map[string]any) string {
 
 	return kubectlModifiesResource(command)
 }
+

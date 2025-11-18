@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/exec"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/journal"
 	"github.com/google/uuid"
 	"sigs.k8s.io/yaml"
@@ -36,6 +37,7 @@ type ContextKey string
 const (
 	KubeconfigKey ContextKey = "kubeconfig"
 	WorkDirKey    ContextKey = "work_dir"
+	ExecutorKey   ContextKey = "executor"
 )
 
 func Lookup(name string) Tool {
@@ -151,6 +153,9 @@ type InvokeToolOptions struct {
 
 	// Kubeconfig is the path to the kubeconfig file.
 	Kubeconfig string
+
+	// Executor abstracts where commands run (local vs remote)
+	Executor exec.Executor
 }
 
 type ToolRequestEvent struct {
@@ -182,6 +187,7 @@ func (t *ToolCall) InvokeTool(ctx context.Context, opt InvokeToolOptions) (any, 
 
 	ctx = context.WithValue(ctx, KubeconfigKey, opt.Kubeconfig)
 	ctx = context.WithValue(ctx, WorkDirKey, opt.WorkDir)
+	ctx = context.WithValue(ctx, ExecutorKey, opt.Executor)
 
 	response, err := t.tool.Run(ctx, t.arguments)
 

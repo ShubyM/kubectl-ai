@@ -17,8 +17,6 @@ package tools
 import (
 	"context"
 	"fmt"
-	"os"
-	"os/exec"
 	"strings"
 
 	"github.com/GoogleCloudPlatform/kubectl-ai/gollm"
@@ -136,13 +134,10 @@ func (t *CustomTool) Run(ctx context.Context, args map[string]any) (any, error) 
 		return nil, fmt.Errorf("failed to process command: %w", err)
 	}
 
-	workDir := ctx.Value(WorkDirKey).(string)
+	workDir, _ := ctx.Value(WorkDirKey).(string)
+	executor := executorFromContext(ctx)
 
-	cmd := exec.CommandContext(ctx, lookupBashBin(), "-c", command)
-	cmd.Dir = workDir
-	cmd.Env = os.Environ()
-
-	return executeCommand(ctx, cmd)
+	return runCommandWithExecutor(ctx, executor, command, workDir, nil, false)
 }
 
 // CheckModifiesResource determines if the command modifies resources

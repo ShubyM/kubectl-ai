@@ -29,8 +29,10 @@ import (
 
 	"github.com/GoogleCloudPlatform/kubectl-ai/gollm"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/api"
+	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/exec"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/journal"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/mcp"
+	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/sandbox"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/sessions"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/tools"
 	"github.com/google/uuid"
@@ -94,12 +96,21 @@ type Agent struct {
 	// MCPClientEnabled indicates whether MCP client mode is enabled
 	MCPClientEnabled bool
 
+	// UseSandbox indicates whether to execute tools in a sandbox environment
+	UseSandbox bool
+
+	// SandboxImage is the container image to use for the sandbox
+	SandboxImage string
+
 	// Recorder captures events for diagnostics
 	Recorder journal.Recorder
 
 	llmChat gollm.Chat
 
 	workDir string
+
+	// executor handles command execution (local, pod, or seatbelt)
+	executor exec.Executor
 
 	// session tracks the current session of the agent
 	// this is used by the UI to track the state of the agent and the conversation
@@ -246,6 +257,30 @@ func (s *Agent) Init(ctx context.Context) error {
 		return fmt.Errorf("initializing chat session: %w", err)
 	}
 
+	s.workDir = workDir
+
+	// Initialize Executor based on configuration
+	if s.UseSandbox {
+		sandboxName := fmt.Sprintf("kubectl-ai-sandbox-%s", uuid.New().String()[:8])
+		sandboxImage := s.SandboxImage
+		if sandboxImage == "" {
+			sandboxImage = "bitnami/kubectl:latest"
+		}
+
+		sb, err := sandbox.New(sandboxName,
+			sandbox.WithKubeconfig(s.Kubeconfig),
+			sandbox.WithImage(sandboxImage),
+		)
+		if err != nil {
+			return fmt.Errorf("failed to create sandbox: %w", err)
+		}
+
+		s.executor = exec.NewK8s(sb)
+		klog.Infof("Initialized Kubernetes Sandbox: %s", sandboxName)
+	} else {
+		s.executor = exec.NewLocal()
+	}
+
 	if s.MCPClientEnabled {
 		if err := s.InitializeMCPClient(ctx); err != nil {
 			klog.Errorf("Failed to initialize MCP client: %v", err)
@@ -271,7 +306,6 @@ func (s *Agent) Init(ctx context.Context) error {
 			return fmt.Errorf("setting function definitions: %w", err)
 		}
 	}
-	s.workDir = workDir
 
 	return nil
 }
@@ -282,6 +316,14 @@ func (c *Agent) Close() error {
 			if err := os.RemoveAll(c.workDir); err != nil {
 				klog.Warningf("error cleaning up directory %q: %v", c.workDir, err)
 			}
+		}
+	}
+	// Close executor resources if needed (e.g., delete sandbox pods)
+	if k8sExec, ok := c.executor.(*exec.K8s); ok {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		if err := k8sExec.Close(ctx); err != nil {
+			klog.Warningf("error cleaning up sandbox: %v", err)
 		}
 	}
 	// Close MCP client connections
@@ -901,6 +943,7 @@ func (c *Agent) DispatchToolCalls(ctx context.Context) error {
 		output, err := call.ParsedToolCall.InvokeTool(ctx, tools.InvokeToolOptions{
 			Kubeconfig: c.Kubeconfig,
 			WorkDir:    c.workDir,
+			Executor:   c.executor,
 		})
 
 		if err != nil {
