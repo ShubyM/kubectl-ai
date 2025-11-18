@@ -102,6 +102,9 @@ type Agent struct {
 	// SandboxImage is the container image to use for the sandbox
 	SandboxImage string
 
+	// SeatbeltProfile is the name of the seatbelt profile to use for local execution (macOS only)
+	SeatbeltProfile string
+
 	// Recorder captures events for diagnostics
 	Recorder journal.Recorder
 
@@ -278,7 +281,12 @@ func (s *Agent) Init(ctx context.Context) error {
 		s.executor = exec.NewK8s(sb)
 		klog.Infof("Initialized Kubernetes Sandbox: %s", sandboxName)
 	} else {
-		s.executor = exec.NewLocal()
+		localExec := exec.NewLocal()
+		if s.SeatbeltProfile != "" {
+			s.executor = exec.NewSeatbeltExecutor(localExec, s.SeatbeltProfile)
+		} else {
+			s.executor = localExec
+		}
 	}
 
 	if s.MCPClientEnabled {
@@ -940,20 +948,29 @@ func (c *Agent) DispatchToolCalls(ctx context.Context) error {
 
 		c.addMessage(api.MessageSourceModel, api.MessageTypeToolCallRequest, toolDescription)
 
-		output, err := call.ParsedToolCall.InvokeTool(ctx, tools.InvokeToolOptions{
-			Kubeconfig: c.Kubeconfig,
+		// Execute the tool
+		result, err := call.ParsedToolCall.InvokeTool(ctx, tools.InvokeToolOptions{
 			WorkDir:    c.workDir,
+			Kubeconfig: c.Kubeconfig,
 			Executor:   c.executor,
 		})
 
 		if err != nil {
-			log.Error(err, "error executing action", "output", output)
+			log.Error(err, "error executing action", "output", result)
 			c.addMessage(api.MessageSourceAgent, api.MessageTypeToolCallResponse, err.Error())
 			return err
 		}
 
+		// If the tool returns a string, we can use it directly
+		// Otherwise, we need to marshal it to JSON
+		if _, ok := result.(string); !ok {
+			if _, err := json.Marshal(result); err != nil {
+				log.Error(err, "error marshaling tool output", "output", result)
+				return fmt.Errorf("marshaling tool output: %w", err)
+			}
+		}
 		// Handle timeout message using UI blocks
-		if execResult, ok := output.(*tools.ExecResult); ok && execResult != nil && execResult.StreamType == "timeout" {
+		if execResult, ok := result.(*tools.ExecResult); ok && execResult != nil && execResult.StreamType == "timeout" {
 			c.addMessage(api.MessageSourceAgent, api.MessageTypeError, "\nTimeout reached after 7 seconds\n")
 		}
 		// Add the tool call result to maintain conversation flow

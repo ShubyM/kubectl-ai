@@ -164,4 +164,3 @@ func (t *Kubectl) CheckModifiesResource(args map[string]any) string {
 
 	return kubectlModifiesResource(command)
 }
-

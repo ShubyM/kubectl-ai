@@ -152,7 +152,6 @@ func shellCommandForExecutor(executor pkgexec.Executor, command string) (string,
 		}
 		return lookupBashBin(), []string{"-c", command}
 	case *pkgexec.K8s:
-		// Sandbox already wraps in /bin/sh -c, so pass command directly
 		return command, nil
 	default:
 		return "/bin/sh", []string{"-c", command}

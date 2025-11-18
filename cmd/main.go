@@ -130,6 +130,8 @@ type Options struct {
 	UseSandbox bool `json:"useSandbox,omitempty"`
 	// SandboxImage is the container image to use for the sandbox
 	SandboxImage string `json:"sandboxImage,omitempty"`
+	// SeatbeltProfile is the name of the seatbelt profile to use for local execution (macOS only)
+	SeatbeltProfile string `json:"seatbeltProfile,omitempty"`
 }
 
 var defaultToolConfigPaths = []string{
@@ -185,6 +187,7 @@ func (o *Options) InitDefaults() {
 	// Default sandbox settings
 	o.UseSandbox = false
 	o.SandboxImage = "bitnami/kubectl:latest"
+	o.SeatbeltProfile = ""
 }
 
 func (o *Options) LoadConfiguration(b []byte) error {
@@ -325,6 +328,7 @@ func (opt *Options) bindCLIFlags(f *pflag.FlagSet) error {
 	f.BoolVar(&opt.ShowToolOutput, "show-tool-output", opt.ShowToolOutput, "show tool output in the terminal UI")
 	f.BoolVar(&opt.UseSandbox, "use-sandbox", opt.UseSandbox, "execute tools in a Kubernetes sandbox environment")
 	f.StringVar(&opt.SandboxImage, "sandbox-image", opt.SandboxImage, "container image to use for the sandbox")
+	f.StringVar(&opt.SeatbeltProfile, "seatbelt-profile", opt.SeatbeltProfile, "seatbelt profile to use for local execution (macOS only). Options: permissive-open, strict, or path to .sb file")
 
 	f.StringVar(&opt.ResumeSession, "resume-session", opt.ResumeSession, "ID of session to resume (use 'latest' for the most recent session)")
 	f.BoolVar(&opt.NewSession, "new-session", opt.NewSession, "create a new session")
@@ -475,6 +479,7 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 		MCPClientEnabled:   opt.MCPClient,
 		UseSandbox:         opt.UseSandbox,
 		SandboxImage:       opt.SandboxImage,
+		SeatbeltProfile:    opt.SeatbeltProfile,
 		RunOnce:            opt.Quiet,
 		InitialQuery:       queryFromCmd,
 		ChatMessageStore:   chatStore,
