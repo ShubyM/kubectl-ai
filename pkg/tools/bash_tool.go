@@ -100,8 +100,14 @@ Possible values:
 func (t *BashTool) Run(ctx context.Context, args map[string]any) (any, error) {
 	command := args["command"].(string)
 
-	// Interactive commands are now supported via the Executor interface
-	// if strings.Contains(command, "kubectl edit") { ... }
+	// Interactive commands are not supported
+	isInteractive, err := t.IsInteractive(args)
+	if err != nil {
+		return nil, err
+	}
+	if isInteractive {
+		return nil, fmt.Errorf("interactive commands are not supported")
+	}
 
 
 	executor := executorFromContext(ctx)

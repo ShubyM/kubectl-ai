@@ -16,6 +16,7 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -122,8 +123,11 @@ func (t *Kubectl) Run(ctx context.Context, args map[string]any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if isInteractive {
+		return nil, fmt.Errorf("interactive commands are not supported")
+	}
 
-	return runCommandWithExecutor(ctx, executor, command, workDir, env, isInteractive)
+	return runCommandWithExecutor(ctx, executor, command, workDir, env, false)
 }
 
 func (t *Kubectl) IsInteractive(args map[string]any) (bool, error) {
