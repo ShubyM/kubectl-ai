@@ -29,8 +29,6 @@ func WrapCommand(command string, args []string, profileName string) (string, []s
 
 	// We need to pass the profile content to sandbox-exec.
 	// sandbox-exec -p PROFILE_CONTENT command args...
-	// Note: passing large profiles via command line might hit limits, but for now it's the simplest way.
-	// Alternatively, we could write to a temp file, but that requires cleanup.
 	
 	newArgs := []string{"-p", profileContent, command}
 	newArgs = append(newArgs, args...)
