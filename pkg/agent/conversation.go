@@ -22,6 +22,7 @@ import (
 	"html/template"
 	"io"
 	"os"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -96,8 +97,9 @@ type Agent struct {
 	// MCPClientEnabled indicates whether MCP client mode is enabled
 	MCPClientEnabled bool
 
-	// UseSandbox indicates whether to execute tools in a sandbox environment
-	UseSandbox bool
+	// UseSandbox determines the sandbox environment to use.
+	// Options: auto, cluster, mac, none
+	UseSandbox string
 
 	// SandboxImage is the container image to use for the sandbox
 	SandboxImage string
@@ -263,7 +265,21 @@ func (s *Agent) Init(ctx context.Context) error {
 	s.workDir = workDir
 
 	// Initialize Executor based on configuration
-	if s.UseSandbox {
+	// Resolve SandboxMode
+	sandboxMode := s.UseSandbox
+	if sandboxMode == "" || sandboxMode == "auto" {
+		// Auto-detection logic
+		// If on macOS, default to mac (seatbelt)
+		// Otherwise, default to none (for now, until we have better detection or a default pod requirement)
+		if runtime.GOOS == "darwin" {
+			sandboxMode = "mac"
+		} else {
+			sandboxMode = "none"
+		}
+	}
+
+	switch sandboxMode {
+	case "cluster":
 		sandboxName := fmt.Sprintf("kubectl-ai-sandbox-%s", uuid.New().String()[:8])
 		sandboxImage := s.SandboxImage
 		if sandboxImage == "" {
@@ -280,13 +296,25 @@ func (s *Agent) Init(ctx context.Context) error {
 
 		s.executor = exec.NewK8s(sb)
 		klog.Infof("Initialized Kubernetes Sandbox: %s", sandboxName)
-	} else {
-		localExec := exec.NewLocal()
-		if s.SeatbeltProfile != "" {
-			s.executor = exec.NewSeatbeltExecutor(localExec, s.SeatbeltProfile)
-		} else {
-			s.executor = localExec
+
+	case "mac":
+		if runtime.GOOS != "darwin" {
+			return fmt.Errorf("mac sandbox mode is only supported on macOS")
 		}
+		localExec := exec.NewLocal()
+		profile := s.SeatbeltProfile
+		if profile == "" {
+			profile = "permissive-open" // Default profile for local mode on Mac
+		}
+		s.executor = exec.NewSeatbeltExecutor(localExec, profile)
+		klog.Infof("Initialized Local Executor with Seatbelt profile: %s", profile)
+
+	case "none":
+		s.executor = exec.NewLocal()
+		klog.Infof("Initialized Local Executor (No Sandbox)")
+
+	default:
+		return fmt.Errorf("unknown sandbox mode: %s", sandboxMode)
 	}
 
 	if s.MCPClientEnabled {
@@ -979,14 +1007,14 @@ func (c *Agent) DispatchToolCalls(ctx context.Context) error {
 			// Add the error as an observation
 			observation := fmt.Sprintf("Result of running %q:\n%v",
 				call.FunctionCall.Name,
-				output)
+				result)
 			c.currChatContent = append(c.currChatContent, observation)
 			payload = observation
 		} else {
 			// If shim is disabled, convert the result to a map and append FunctionCallResult
-			result, err := tools.ToolResultToMap(output)
+			result, err := tools.ToolResultToMap(result)
 			if err != nil {
-				log.Error(err, "error converting tool result to map", "output", output)
+				log.Error(err, "error converting tool result to map", "output", result)
 				return err
 			}
 			payload = result

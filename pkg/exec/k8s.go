@@ -9,12 +9,12 @@ import (
 
 // K8s runs commands inside a remote pod.
 type K8s struct {
-	sandbox *sandbox.Sandbox
+	sandbox *sandbox.KubeSandbox
 }
 
 var _ Executor = (*K8s)(nil)
 
-func NewK8s(sb *sandbox.Sandbox) *K8s {
+func NewK8s(sb *sandbox.KubeSandbox) *K8s {
 	return &K8s{sandbox: sb}
 }
 

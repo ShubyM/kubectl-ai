@@ -23,21 +23,21 @@ import (
 	"k8s.io/client-go/tools/remotecommand"
 )
 
-// Sandbox represents a Kubernetes-based sandboxed execution environment
-type Sandbox struct {
+// KubeSandbox represents a Kubernetes-based sandboxed execution environment
+type KubeSandbox struct {
 	name           string
 	namespace      string
 	serviceAccount string
 	image          string
 	kubeconfig     string
-	clientset  *kubernetes.Clientset
-	config     *rest.Config
+	clientset      *kubernetes.Clientset
+	config         *rest.Config
 }
 
 // Cmd represents a command to be executed in a sandbox
 // It follows the same interface pattern as exec.Cmd
 type Cmd struct {
-	sandbox *Sandbox
+	sandbox *KubeSandbox
 	command []string
 	ctx     context.Context
 
@@ -48,12 +48,12 @@ type Cmd struct {
 	TTY    bool
 }
 
-// Option represents a configuration option for Sandbox
-type Option func(*Sandbox) error
+// Option represents a configuration option for KubeSandbox
+type Option func(*KubeSandbox) error
 
-// New creates a new Sandbox instance with the given name and options
-func New(name string, opts ...Option) (*Sandbox, error) {
-	s := &Sandbox{
+// New creates a new KubeSandbox instance with the given name and options
+func New(name string, opts ...Option) (*KubeSandbox, error) {
+	s := &KubeSandbox{
 		name:           name,
 		namespace:      "computer", // default namespace
 		serviceAccount: "normal-user",
@@ -86,7 +86,7 @@ func New(name string, opts ...Option) (*Sandbox, error) {
 
 // WithKubeconfig sets the kubeconfig file path
 func WithKubeconfig(kubeconfig string) Option {
-	return func(s *Sandbox) error {
+	return func(s *KubeSandbox) error {
 		s.kubeconfig = kubeconfig
 		return nil
 	}
@@ -94,7 +94,7 @@ func WithKubeconfig(kubeconfig string) Option {
 
 // WithName sets the sandbox name (deprecated - use constructor parameter instead)
 func WithName(name string) Option {
-	return func(s *Sandbox) error {
+	return func(s *KubeSandbox) error {
 		s.name = name
 		return nil
 	}
@@ -102,7 +102,7 @@ func WithName(name string) Option {
 
 // WithNamespace sets the namespace
 func WithNamespace(namespace string) Option {
-	return func(s *Sandbox) error {
+	return func(s *KubeSandbox) error {
 		s.namespace = namespace
 		return nil
 	}
@@ -110,7 +110,7 @@ func WithNamespace(namespace string) Option {
 
 // WithImage sets the container image
 func WithImage(image string) Option {
-	return func(s *Sandbox) error {
+	return func(s *KubeSandbox) error {
 		s.image = image
 		return nil
 	}
@@ -118,7 +118,7 @@ func WithImage(image string) Option {
 
 // WithServiceAccount sets the service account
 func WithServiceAccount(sa string) Option {
-	return func(s *Sandbox) error {
+	return func(s *KubeSandbox) error {
 		if sa != "" {
 			s.serviceAccount = sa
 		}
@@ -128,12 +128,12 @@ func WithServiceAccount(sa string) Option {
 
 // Command creates a new Cmd to execute the given command in the sandbox
 // This follows the same interface as exec.Command
-func (s *Sandbox) Command(name string, arg ...string) *Cmd {
+func (s *KubeSandbox) Command(name string, arg ...string) *Cmd {
 	return s.CommandContext(context.Background(), name, arg...)
 }
 
 // CommandContext creates a new Cmd with a context
-func (s *Sandbox) CommandContext(ctx context.Context, name string, arg ...string) *Cmd {
+func (s *KubeSandbox) CommandContext(ctx context.Context, name string, arg ...string) *Cmd {
 	cmd := &Cmd{
 		sandbox: s,
 		command: append([]string{name}, arg...),
@@ -144,7 +144,7 @@ func (s *Sandbox) CommandContext(ctx context.Context, name string, arg ...string
 
 // Delete removes the sandbox pod and its associated resources, waiting for them to be fully terminated.
 // It does not return an error if the resources are already deleted.
-func (s *Sandbox) Delete(ctx context.Context) error {
+func (s *KubeSandbox) Delete(ctx context.Context) error {
 	var errs []string
 
 	// 1. Initiate deletion of the Pod with a zero grace period for faster removal.
@@ -381,7 +381,7 @@ users:
 }
 
 // deleteKubeconfigMap cleans up the ConfigMap created for the pod.
-func (s *Sandbox) deleteKubeconfigMap(ctx context.Context, name string) error {
+func (s *KubeSandbox) deleteKubeconfigMap(ctx context.Context, name string) error {
 	err := s.clientset.CoreV1().ConfigMaps(s.namespace).Delete(ctx, name, metav1.DeleteOptions{})
 	if err != nil && !errors.IsNotFound(err) {
 		return fmt.Errorf("failed to delete kubeconfig configmap: %w", err)

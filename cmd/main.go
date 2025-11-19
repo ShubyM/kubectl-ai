@@ -126,8 +126,10 @@ type Options struct {
 
 	// ShowToolOutput is a flag to disable truncation of tool output in the terminal UI.
 	ShowToolOutput bool `json:"showToolOutput,omitempty"`
-	// UseSandbox enables execution of tools in a Kubernetes sandbox environment
-	UseSandbox bool `json:"useSandbox,omitempty"`
+	// UseSandbox determines the sandbox environment to use.
+	// Options: auto, cluster, mac, none
+	// Default: none (if flag omitted), auto (if flag provided without value)
+	UseSandbox string `json:"useSandbox,omitempty"`
 	// SandboxImage is the container image to use for the sandbox
 	SandboxImage string `json:"sandboxImage,omitempty"`
 	// SeatbeltProfile is the name of the seatbelt profile to use for local execution (macOS only)
@@ -185,7 +187,7 @@ func (o *Options) InitDefaults() {
 	// By default, hide tool outputs
 	o.ShowToolOutput = false
 	// Default sandbox settings
-	o.UseSandbox = false
+	o.UseSandbox = "none"
 	o.SandboxImage = "bitnami/kubectl:latest"
 	o.SeatbeltProfile = ""
 }
@@ -326,7 +328,9 @@ func (opt *Options) bindCLIFlags(f *pflag.FlagSet) error {
 	f.StringVar(&opt.UIListenAddress, "ui-listen-address", opt.UIListenAddress, "address to listen for the HTML UI.")
 	f.BoolVar(&opt.SkipVerifySSL, "skip-verify-ssl", opt.SkipVerifySSL, "skip verifying the SSL certificate of the LLM provider")
 	f.BoolVar(&opt.ShowToolOutput, "show-tool-output", opt.ShowToolOutput, "show tool output in the terminal UI")
-	f.BoolVar(&opt.UseSandbox, "use-sandbox", opt.UseSandbox, "execute tools in a Kubernetes sandbox environment")
+	f.StringVar(&opt.UseSandbox, "use-sandbox", opt.UseSandbox, "sandbox mode to use. Options: auto, cluster, mac, none")
+	// Set NoOptDefVal to "auto" so that --use-sandbox (without value) defaults to "auto"
+	f.Lookup("use-sandbox").NoOptDefVal = "auto"
 	f.StringVar(&opt.SandboxImage, "sandbox-image", opt.SandboxImage, "container image to use for the sandbox")
 	f.StringVar(&opt.SeatbeltProfile, "seatbelt-profile", opt.SeatbeltProfile, "seatbelt profile to use for local execution (macOS only). Options: permissive-open, strict, or path to .sb file")
 
