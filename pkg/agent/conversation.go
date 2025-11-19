@@ -22,6 +22,7 @@ import (
 	"html/template"
 	"io"
 	"os"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -87,7 +88,7 @@ type Agent struct {
 	// Kubeconfig is the path to the kubeconfig file.
 	Kubeconfig string
 	// UseSandbox indicates whether to execute tools in a sandbox environment
-	UseSandbox bool
+	UseSandbox string
 
 	// SandboxImage is the container image to use for the sandbox
 	SandboxImage string
@@ -271,7 +272,9 @@ func (s *Agent) Init(ctx context.Context) error {
 		}
 	}
 
-	if s.UseSandbox {
+
+	switch s.UseSandbox {
+	case "cluster":
 		sandboxName := fmt.Sprintf("kubectl-ai-sandbox-%s", uuid.New().String()[:8])
 
 		// Use default image if not specified
@@ -292,8 +295,20 @@ func (s *Agent) Init(ctx context.Context) error {
 		s.sandbox = sb
 		s.executor = pkgexec.NewSandboxExecutor(sb)
 		log.Info("Created sandbox", "name", sandboxName, "image", sandboxImage)
-	} else {
+
+	case "mac":
+		if runtime.GOOS != "darwin" {
+			return fmt.Errorf("seatbelt sandbox is only supported on macOS")
+		}
+		s.executor = pkgexec.NewSeatbeltExecutor()
+		log.Info("Using Seatbelt executor")
+
+	case "":
+		// No sandbox, use local executor
 		s.executor = pkgexec.NewLocalExecutor()
+
+	default:
+		return fmt.Errorf("unknown sandbox type: %s", s.UseSandbox)
 	}
 
 	if !s.EnableToolUseShim {

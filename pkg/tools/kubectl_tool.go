@@ -131,7 +131,7 @@ func (t *Kubectl) Run(ctx context.Context, args map[string]any) (any, error) {
 		env = append(env, "KUBECONFIG="+kubeconfig)
 	}
 
-	return executor.Execute(ctx, command, env, workDir)
+	return ExecuteWithStreamingHandling(ctx, command, env, workDir, executor)
 }
 
 func (t *Kubectl) IsInteractive(args map[string]any) (bool, error) {

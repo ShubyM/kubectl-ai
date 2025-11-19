@@ -123,7 +123,7 @@ func (t *BashTool) Run(ctx context.Context, args map[string]any) (any, error) {
 		env = append(env, "KUBECONFIG="+kubeconfig)
 	}
 
-	return executor.Execute(ctx, command, env, workDir)
+	return ExecuteWithStreamingHandling(ctx, command, env, workDir, executor)
 }
 
 func validateCommand(command string) error {

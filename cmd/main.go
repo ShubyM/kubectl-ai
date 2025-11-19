@@ -127,8 +127,10 @@ type Options struct {
 	// ShowToolOutput is a flag to disable truncation of tool output in the terminal UI.
 	ShowToolOutput bool `json:"showToolOutput,omitempty"`
 
-	// UseSandbox enables execution of tools in a Kubernetes sandbox environment
-	UseSandbox bool `json:"useSandbox,omitempty"`
+	// UseSandbox enables execution of tools in a sandbox environment.
+	// Supported values: "cluster", "mac".
+	// If empty, tools are executed locally.
+	UseSandbox string `json:"useSandbox,omitempty"`
 
 	// SandboxImage is the container image to use for the sandbox
 	SandboxImage string `json:"sandboxImage,omitempty"`
@@ -185,7 +187,7 @@ func (o *Options) InitDefaults() {
 	// By default, hide tool outputs
 	o.ShowToolOutput = false
 
-	o.UseSandbox = false
+	o.UseSandbox = ""
 	o.SandboxImage = "bitnami/kubectl:latest"
 }
 
@@ -326,7 +328,7 @@ func (opt *Options) bindCLIFlags(f *pflag.FlagSet) error {
 	f.BoolVar(&opt.SkipVerifySSL, "skip-verify-ssl", opt.SkipVerifySSL, "skip verifying the SSL certificate of the LLM provider")
 	f.BoolVar(&opt.ShowToolOutput, "show-tool-output", opt.ShowToolOutput, "show tool output in the terminal UI")
 
-	f.BoolVar(&opt.UseSandbox, "use-sandbox", opt.UseSandbox, "execute tools in a Kubernetes sandbox environment")
+	f.StringVar(&opt.UseSandbox, "use-sandbox", opt.UseSandbox, "execute tools in a sandbox environment (cluster, mac)")
 	f.StringVar(&opt.SandboxImage, "sandbox-image", opt.SandboxImage, "container image to use for the sandbox")
 
 	f.StringVar(&opt.ResumeSession, "resume-session", opt.ResumeSession, "ID of session to resume (use 'latest' for the most recent session)")
