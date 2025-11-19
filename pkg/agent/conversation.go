@@ -29,8 +29,10 @@ import (
 
 	"github.com/GoogleCloudPlatform/kubectl-ai/gollm"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/api"
+	pkgexec "github.com/GoogleCloudPlatform/kubectl-ai/pkg/exec"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/journal"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/mcp"
+	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/sandbox"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/sessions"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/tools"
 	"github.com/google/uuid"
@@ -84,6 +86,11 @@ type Agent struct {
 
 	// Kubeconfig is the path to the kubeconfig file.
 	Kubeconfig string
+	// UseSandbox indicates whether to execute tools in a sandbox environment
+	UseSandbox bool
+
+	// SandboxImage is the container image to use for the sandbox
+	SandboxImage string
 
 	SkipPermissions bool
 
@@ -100,6 +107,12 @@ type Agent struct {
 	llmChat gollm.Chat
 
 	workDir string
+
+	// sandbox is the sandbox instance for isolated command execution
+	sandbox *sandbox.Sandbox
+
+	// executor is the executor for tool execution
+	executor pkgexec.Executor
 
 	// session tracks the current session of the agent
 	// this is used by the UI to track the state of the agent and the conversation
@@ -258,6 +271,31 @@ func (s *Agent) Init(ctx context.Context) error {
 		}
 	}
 
+	if s.UseSandbox {
+		sandboxName := fmt.Sprintf("kubectl-ai-sandbox-%s", uuid.New().String()[:8])
+
+		// Use default image if not specified
+		sandboxImage := s.SandboxImage
+		if sandboxImage == "" {
+			sandboxImage = "bitnami/kubectl:latest"
+		}
+
+		// Create sandbox with kubeconfig
+		sb, err := sandbox.New(sandboxName,
+			sandbox.WithKubeconfig(s.Kubeconfig),
+			sandbox.WithImage(sandboxImage),
+		)
+		if err != nil {
+			return fmt.Errorf("failed to create sandbox: %w", err)
+		}
+
+		s.sandbox = sb
+		s.executor = pkgexec.NewSandboxExecutor(sb)
+		log.Info("Created sandbox", "name", sandboxName, "image", sandboxImage)
+	} else {
+		s.executor = pkgexec.NewLocalExecutor()
+	}
+
 	if !s.EnableToolUseShim {
 		var functionDefinitions []*gollm.FunctionDefinition
 		for _, tool := range s.Tools.AllTools() {
@@ -287,6 +325,17 @@ func (c *Agent) Close() error {
 	// Close MCP client connections
 	if err := c.CloseMCPClient(); err != nil {
 		klog.Warningf("error closing MCP client: %v", err)
+	}
+
+	// Close sandbox if enabled
+	if c.sandbox != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		if err := c.sandbox.Delete(ctx); err != nil {
+			klog.Warningf("error cleaning up sandbox: %v", err)
+		} else {
+			klog.Info("Sandbox cleaned up successfully")
+		}
 	}
 	return nil
 }
@@ -901,6 +950,7 @@ func (c *Agent) DispatchToolCalls(ctx context.Context) error {
 		output, err := call.ParsedToolCall.InvokeTool(ctx, tools.InvokeToolOptions{
 			Kubeconfig: c.Kubeconfig,
 			WorkDir:    c.workDir,
+			Executor:   c.executor,
 		})
 
 		if err != nil {
@@ -910,7 +960,7 @@ func (c *Agent) DispatchToolCalls(ctx context.Context) error {
 		}
 
 		// Handle timeout message using UI blocks
-		if execResult, ok := output.(*tools.ExecResult); ok && execResult != nil && execResult.StreamType == "timeout" {
+		if execResult, ok := output.(*pkgexec.ExecResult); ok && execResult != nil && execResult.StreamType == "timeout" {
 			c.addMessage(api.MessageSourceAgent, api.MessageTypeError, "\nTimeout reached after 7 seconds\n")
 		}
 		// Add the tool call result to maintain conversation flow

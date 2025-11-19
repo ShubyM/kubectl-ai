@@ -17,10 +17,9 @@ package tools
 import (
 	"context"
 	"os"
-	"os/exec"
-	"runtime"
 
 	"github.com/GoogleCloudPlatform/kubectl-ai/gollm"
+	pkgexec "github.com/GoogleCloudPlatform/kubectl-ai/pkg/exec"
 )
 
 func init() {
@@ -101,40 +100,38 @@ func (t *Kubectl) Run(ctx context.Context, args map[string]any) (any, error) {
 	// Add nil check for command
 	commandVal, ok := args["command"]
 	if !ok || commandVal == nil {
-		return &ExecResult{Error: "kubectl command not provided or is nil"}, nil
+		return &pkgexec.ExecResult{Error: "kubectl command not provided or is nil"}, nil
 	}
 
 	command, ok := commandVal.(string)
 	if !ok {
-		return &ExecResult{Error: "kubectl command must be a string"}, nil
+		return &pkgexec.ExecResult{Error: "kubectl command must be a string"}, nil
 	}
 
-	return runKubectlCommand(ctx, command, workDir, kubeconfig)
-}
-
-func runKubectlCommand(ctx context.Context, command, workDir, kubeconfig string) (*ExecResult, error) {
 	// Check for interactive commands before proceeding
 	if isInteractive, err := IsInteractiveCommand(command); isInteractive {
-		return &ExecResult{Error: err.Error()}, nil
+		return &pkgexec.ExecResult{Error: err.Error()}, nil
 	}
 
-	var cmd *exec.Cmd
-	if runtime.GOOS == "windows" {
-		cmd = exec.CommandContext(ctx, os.Getenv("COMSPEC"), "/c", command)
+	// Get executor from context or default to local
+	var executor pkgexec.Executor
+	if v := ctx.Value(ExecutorKey); v != nil {
+		executor = v.(pkgexec.Executor)
 	} else {
-		cmd = exec.CommandContext(ctx, lookupBashBin(), "-c", command)
+		executor = pkgexec.NewLocalExecutor()
 	}
-	cmd.Env = os.Environ()
-	cmd.Dir = workDir
+
+	// Prepare environment
+	env := os.Environ()
 	if kubeconfig != "" {
-		kubeconfig, err := expandShellVar(kubeconfig)
+		kubeconfig, err := ExpandShellVar(kubeconfig)
 		if err != nil {
 			return nil, err
 		}
-		cmd.Env = append(cmd.Env, "KUBECONFIG="+kubeconfig)
+		env = append(env, "KUBECONFIG="+kubeconfig)
 	}
 
-	return executeCommand(ctx, cmd)
+	return executor.Execute(ctx, command, env, workDir)
 }
 
 func (t *Kubectl) IsInteractive(args map[string]any) (bool, error) {
