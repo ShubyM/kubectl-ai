@@ -401,14 +401,17 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 	// Initialize session management
 	var chatStore api.ChatMessageStore
 	var sessionManager *sessions.SessionManager
+	var session *api.Session
+
+	// Initialize the session manager (default to filesystem for now, or memory if configured)
+	// TODO: Add flag to configure backend
+	sessionManager, err = sessions.NewSessionManager("filesystem")
+	if err != nil {
+		return fmt.Errorf("failed to create session manager: %w", err)
+	}
 
 	// TODO: Remove this when session persistence is default
 	if opt.NewSession || opt.ResumeSession != "" {
-		sessionManager, err = sessions.NewSessionManager()
-		if err != nil {
-			return fmt.Errorf("failed to create session manager: %w", err)
-		}
-
 		// Handle session creation or loading
 		if opt.NewSession {
 			// Create a new session
@@ -416,37 +419,41 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 				ProviderID: opt.ProviderID,
 				ModelID:    opt.ModelID,
 			}
-			chatStore, err = sessionManager.NewSession(meta)
+
+			session, err = sessionManager.NewSession(meta)
 			if err != nil {
 				return fmt.Errorf("failed to create a new session: %w", err)
 			}
-			klog.Infof("Created new session: %s\n", chatStore.(*sessions.Session).ID)
+			chatStore = session.ChatMessageStore
+			klog.Infof("Created new session: %s\n", session.ID)
 		} else {
 			// Load existing session
-			var sessionID string
 			if opt.ResumeSession == "" || opt.ResumeSession == "latest" {
 				// Get the latest session
-				chatStore, err = sessionManager.GetLatestSession()
+				session, err = sessionManager.GetLatestSession()
 				if err != nil {
 					return fmt.Errorf("failed to get latest session: %w", err)
 				}
 			} else {
-				sessionID = opt.ResumeSession
-				chatStore, err = sessionManager.FindSessionByID(sessionID)
+				session, err = sessionManager.FindSessionByID(opt.ResumeSession)
 				if err != nil {
-					return fmt.Errorf("session %s not found: %w", sessionID, err)
+					return fmt.Errorf("session %s not found: %w", opt.ResumeSession, err)
 				}
 			}
 
-			if chatStore != nil {
-				// Update last accessed time
-				if err := chatStore.(*sessions.Session).UpdateLastAccessed(); err != nil {
+			if session != nil {
+				// Update last accessed time (LastModified)
+				if err := sessionManager.UpdateLastAccessed(session); err != nil {
 					klog.Warningf("Failed to update session last accessed time: %v", err)
 				}
+				chatStore = session.ChatMessageStore
 			}
 		}
 	} else {
-		chatStore = sessions.NewInMemoryChatStore()
+		// Use in-memory store for ephemeral sessions
+		memManager, _ := sessions.NewSessionManager("memory")
+		session, _ = memManager.NewSession(sessions.Metadata{})
+		chatStore = session.ChatMessageStore
 	}
 
 	var recorder journal.Recorder
@@ -485,7 +492,7 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 		SandboxImage:       opt.SandboxImage,
 	}
 
-	err = k8sAgent.Init(ctx)
+	err = k8sAgent.Init(ctx, session)
 	if err != nil {
 		return fmt.Errorf("starting k8s agent: %w", err)
 	}
@@ -695,7 +702,7 @@ func startMCPServer(ctx context.Context, opt Options) error {
 
 // handleListSessions lists all available sessions with their metadata.
 func handleListSessions() error {
-	manager, err := sessions.NewSessionManager()
+	manager, err := sessions.NewSessionManager("filesystem")
 	if err != nil {
 		return fmt.Errorf("failed to create session manager: %w", err)
 	}
@@ -711,22 +718,14 @@ func handleListSessions() error {
 	}
 
 	fmt.Println("Available sessions:")
-	fmt.Println("ID\t\tCreated\t\t\tLast Accessed\t\tModel\t\tProvider")
-	fmt.Println("--\t\t-------\t\t\t-------------\t\t-----\t\t--------")
+	fmt.Println("ID\t\tCreated\t\t\tLast Modified")
+	fmt.Println("--\t\t-------\t\t\t-------------")
 
 	for _, session := range sessionList {
-		metadata, err := session.LoadMetadata()
-		if err != nil {
-			fmt.Printf("%s\t\t<error loading metadata>\n", session.ID)
-			continue
-		}
-
-		fmt.Printf("%s\t%s\t%s\t%s\t%s\n",
+		fmt.Printf("%s\t%s\t%s\n",
 			session.ID,
-			metadata.CreatedAt.Format("2006-01-02 15:04:05"),
-			metadata.LastAccessed.Format("2006-01-02 15:04:05"),
-			metadata.ModelID,
-			metadata.ProviderID)
+			session.CreatedAt.Format("2006-01-02 15:04:05"),
+			session.LastModified.Format("2006-01-02 15:04:05"))
 	}
 
 	return nil
@@ -734,27 +733,20 @@ func handleListSessions() error {
 
 // handleDeleteSession deletes a session by ID.
 func handleDeleteSession(sessionID string) error {
-	manager, err := sessions.NewSessionManager()
+	manager, err := sessions.NewSessionManager("filesystem")
 	if err != nil {
 		return fmt.Errorf("failed to create session manager: %w", err)
 	}
 
-	// Check if session exists
+	// Check if session exists (GetSession loads it)
 	session, err := manager.FindSessionByID(sessionID)
 	if err != nil {
 		return fmt.Errorf("session %s not found: %w", sessionID, err)
 	}
 
-	// Load metadata for confirmation
-	metadata, err := session.LoadMetadata()
-	if err != nil {
-		return fmt.Errorf("failed to load session metadata: %w", err)
-	}
-
 	fmt.Printf("Deleting session %s:\n", sessionID)
-	fmt.Printf("  Model: %s\n", metadata.ModelID)
-	fmt.Printf("  Provider: %s\n", metadata.ProviderID)
-	fmt.Printf("  Created: %s\n", metadata.CreatedAt.Format("2006-01-02 15:04:05"))
+	fmt.Printf("  Created: %s\n", session.CreatedAt.Format("2006-01-02 15:04:05"))
+	fmt.Printf("  Last Modified: %s\n", session.LastModified.Format("2006-01-02 15:04:05"))
 
 	fmt.Print("Are you sure you want to delete this session? (y/N): ")
 	var response string

@@ -135,12 +135,6 @@ type Agent struct {
 	lastErr error
 }
 
-// Assert Session implements ChatMessageStore
-var _ api.ChatMessageStore = &sessions.Session{}
-
-// Assert InMemoryChatStore implements ChatMessageStore
-var _ api.ChatMessageStore = &sessions.InMemoryChatStore{}
-
 func (s *Agent) Session() *api.Session {
 	s.sessionMu.Lock()
 	defer s.sessionMu.Unlock()
@@ -197,7 +191,7 @@ func (c *Agent) agentState() api.AgentState {
 	return c.session.AgentState
 }
 
-func (s *Agent) Init(ctx context.Context) error {
+func (s *Agent) Init(ctx context.Context, session *api.Session) error {
 	log := klog.FromContext(ctx)
 
 	s.Input = make(chan any, 10)
@@ -211,18 +205,10 @@ func (s *Agent) Init(ctx context.Context) error {
 		return fmt.Errorf("RunOnce mode requires an initial query to be provided")
 	}
 
-	s.session = &api.Session{
-		Messages:         s.ChatMessageStore.ChatMessages(),
-		AgentState:       api.AgentStateIdle,
-		ChatMessageStore: s.ChatMessageStore,
-	}
-
-	if session, ok := s.ChatMessageStore.(*sessions.Session); ok {
-		s.loadSession(session.ID)
-	} else {
-		s.session.ID = uuid.New().String()
-		s.session.CreatedAt = time.Now()
-		s.session.LastModified = time.Now()
+	s.session = session
+	// Ensure ChatMessageStore is set on the agent if not already
+	if s.ChatMessageStore == nil {
+		s.ChatMessageStore = s.session.ChatMessageStore
 	}
 
 	// Create a temporary working directory
@@ -782,12 +768,8 @@ func (c *Agent) handleMetaQuery(ctx context.Context, query string) (answer strin
 	case "tools":
 		return "Available tools:\n\n  - " + strings.Join(c.Tools.Names(), "\n  - ") + "\n\n", true, nil
 	case "session":
-		if s, ok := c.ChatMessageStore.(*sessions.Session); ok {
-			out, err := s.String()
-			if err != nil {
-				return "", false, fmt.Errorf("failed to get session string: %w", err)
-			}
-			return out, true, nil
+		if c.session != nil {
+			return fmt.Sprintf("Session ID: %s\nProvider: %s\nModel: %s\n", c.session.ID, c.session.ProviderID, c.session.ModelID), true, nil
 		}
 		return "Session not found (session persistence not enabled)", true, nil
 
@@ -799,7 +781,7 @@ func (c *Agent) handleMetaQuery(ctx context.Context, query string) (answer strin
 		return "Saved session as " + savedSessionID, true, nil
 
 	case "sessions":
-		manager, err := sessions.NewSessionManager()
+		manager, err := sessions.NewSessionManager("filesystem")
 		if err != nil {
 			return "", false, fmt.Errorf("failed to create session manager: %w", err)
 		}
@@ -815,22 +797,16 @@ func (c *Agent) handleMetaQuery(ctx context.Context, query string) (answer strin
 		// Add ```text so markdown doesn't wreck the format
 		availableSessions := "```text"
 		availableSessions += "Available sessions:\n\n"
-		availableSessions += "ID\t\t\tCreated\t\t\tLast Accessed\t\tModel\t\tProvider\n"
+		availableSessions += "ID\t\t\tCreated\t\t\tLast Modified\t\tModel\t\tProvider\n"
 		availableSessions += "--\t\t\t-------\t\t\t-------------\t\t-----\t\t--------\n"
 
 		for _, session := range sessionList {
-			metadata, err := session.LoadMetadata()
-			if err != nil {
-				availableSessions += fmt.Sprintf("%s\t\t<error loading metadata>\n", session.ID)
-				continue
-			}
-
 			availableSessions += fmt.Sprintf("%s\t%s\t%s\t%s\t%s\n",
 				session.ID,
-				metadata.CreatedAt.Format("2006-01-02 15:04"),
-				metadata.LastAccessed.Format("2006-01-02 15:04"),
-				metadata.ModelID,
-				metadata.ProviderID)
+				session.CreatedAt.Format("2006-01-02 15:04"),
+				session.LastModified.Format("2006-01-02 15:04"),
+				session.ModelID,
+				session.ProviderID)
 		}
 		// close the ```text box
 		availableSessions += "```"
@@ -856,7 +832,7 @@ func (c *Agent) SaveSession() (string, error) {
 	c.sessionMu.Lock()
 	defer c.sessionMu.Unlock()
 
-	manager, err := sessions.NewSessionManager()
+	manager, err := sessions.NewSessionManager("filesystem")
 	if err != nil {
 		return "", fmt.Errorf("failed to create session manager: %w", err)
 	}
@@ -865,10 +841,8 @@ func (c *Agent) SaveSession() (string, error) {
 		return foundSession.ID, nil
 	}
 	metadata := sessions.Metadata{
-		CreatedAt:    c.session.CreatedAt,
-		LastAccessed: time.Now(),
-		ModelID:      c.Model,
-		ProviderID:   c.Provider,
+		ModelID:    c.Model,
+		ProviderID: c.Provider,
 	}
 	newSession, err := manager.NewSession(metadata)
 	if err != nil {
@@ -876,12 +850,12 @@ func (c *Agent) SaveSession() (string, error) {
 	}
 
 	messages := c.ChatMessageStore.ChatMessages()
-	if err := newSession.SetChatMessages(messages); err != nil {
+	if err := newSession.ChatMessageStore.SetChatMessages(messages); err != nil {
 		return "", fmt.Errorf("failed to save chat messages to new session: %w", err)
 	}
 
-	c.ChatMessageStore = newSession
-	c.session.ChatMessageStore = newSession
+	c.ChatMessageStore = newSession.ChatMessageStore
+	c.session = newSession
 	c.llmChat.Initialize(c.ChatMessageStore.ChatMessages())
 
 	return newSession.ID, nil
@@ -889,12 +863,12 @@ func (c *Agent) SaveSession() (string, error) {
 
 // loadSession loads a session by ID (or latest), updates the agent's state, and re-initializes the chat.
 func (c *Agent) loadSession(sessionID string) error {
-	manager, err := sessions.NewSessionManager()
+	manager, err := sessions.NewSessionManager("filesystem")
 	if err != nil {
 		return fmt.Errorf("failed to create session manager: %w", err)
 	}
 
-	var session *sessions.Session
+	var session *api.Session
 	if sessionID == "" || sessionID == "latest" {
 		s, err := manager.GetLatestSession()
 		if err != nil {
@@ -916,20 +890,11 @@ func (c *Agent) loadSession(sessionID string) error {
 	c.sessionMu.Lock()
 	defer c.sessionMu.Unlock()
 
-	c.ChatMessageStore = session
-	c.session.ChatMessageStore = session
-	c.session.Messages = session.ChatMessages()
-	metadata, err := session.LoadMetadata()
-	if err != nil {
-		return fmt.Errorf("failed to load session metadata: %w", err)
-	}
-	c.session.ID = session.ID
-	c.session.CreatedAt = metadata.CreatedAt
-	now := time.Now()
-	c.session.LastModified = now
-	metadata.LastAccessed = now
-	if err := session.SaveMetadata(metadata); err != nil {
-		return fmt.Errorf("failed to update session metadata: %w", err)
+	c.ChatMessageStore = session.ChatMessageStore
+	c.session = session
+	// Update last accessed
+	if err := manager.UpdateLastAccessed(session); err != nil {
+		klog.Warningf("Failed to update session last accessed time: %v", err)
 	}
 
 	if c.llmChat != nil {

@@ -24,6 +24,9 @@ type Session struct {
 	AgentState   AgentState
 	CreatedAt    time.Time
 	LastModified time.Time
+	// Metadata
+	ProviderID string
+	ModelID    string
 	// MCP status information
 	MCPStatus *MCPStatus
 	// ChatMessageStore is an interface that allows the session to store and retrieve chat messages.
