@@ -272,7 +272,6 @@ func (s *Agent) Init(ctx context.Context) error {
 		}
 	}
 
-
 	switch s.UseSandbox {
 	case "cluster":
 		sandboxName := fmt.Sprintf("kubectl-ai-sandbox-%s", uuid.New().String()[:8])
