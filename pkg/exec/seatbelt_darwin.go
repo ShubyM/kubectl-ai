@@ -8,8 +8,6 @@ import (
 
 // SeatbeltExecutor executes commands locally using os/exec wrapped in sandbox-exec.
 type SeatbeltExecutor struct {
-	// Profile is the seatbelt profile to use.
-	// If empty, a default profile will be used.
 	Profile string
 }
 
@@ -23,14 +21,11 @@ func (e *SeatbeltExecutor) Execute(ctx context.Context, command string, env []st
 	// Use the provided context directly
 	cmdCtx := ctx
 
-	// Default profile if none specified
 	// This profile allows reading/writing to the working directory and /tmp,
 	// but denies writing to other system locations by default (implicitly, though 'allow default' is permissive).
-	// We use a simple profile for now that allows everything but logs it, or just 'allow default'.
-	// Ideally, we should generate a strict profile.
+
 	profile := e.Profile
 	if profile == "" {
-		// Generate a default profile
 		profile = `(version 1)
 (allow default)
 (allow file-write*
@@ -48,8 +43,6 @@ func (e *SeatbeltExecutor) Execute(ctx context.Context, command string, env []st
 `
 	}
 
-	// Wrap command with sandbox-exec
-	// We use bash to execute the command string within the sandbox
 	// Use -p to pass the profile directly
 	sandboxArgs := []string{"-p", profile, "/bin/bash", "-c", command}
 	cmd := exec.CommandContext(cmdCtx, "sandbox-exec", sandboxArgs...)
@@ -69,11 +62,9 @@ func (e *SeatbeltExecutor) Execute(ctx context.Context, command string, env []st
 	}
 
 	if err != nil {
-		// If it wasn't a timeout (or not a streaming command), it's a real error
 		if exitError, ok := err.(*exec.ExitError); ok {
 			result.ExitCode = exitError.ExitCode()
 			result.Error = exitError.Error()
-			// Stderr is already captured in result.Stderr
 		} else {
 			return nil, err
 		}
