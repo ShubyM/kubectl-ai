@@ -18,14 +18,12 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 
 	"github.com/GoogleCloudPlatform/kubectl-ai/gollm"
-	pkgexec "github.com/GoogleCloudPlatform/kubectl-ai/pkg/exec"
-	"k8s.io/klog/v2"
+	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/sandbox"
 )
 
 func init() {
@@ -35,17 +33,6 @@ func init() {
 const (
 	defaultBashBin = "/bin/bash"
 )
-
-// Find the bash executable path using exec.LookPath.
-// On some systems (like NixOS), executables might not be in standard locations like /bin/bash.
-func lookupBashBin() string {
-	actualBashPath, err := exec.LookPath("bash")
-	if err != nil {
-		klog.Warningf("'bash' not found in PATH, defaulting to %s: %v", defaultBashBin, err)
-		return defaultBashBin
-	}
-	return actualBashPath
-}
 
 // expandShellVar expands shell variables and syntax using bash
 func expandShellVar(value string) (string, error) {
@@ -102,15 +89,15 @@ func (t *BashTool) Run(ctx context.Context, args map[string]any) (any, error) {
 	command := args["command"].(string)
 
 	if err := validateCommand(command); err != nil {
-		return &pkgexec.ExecResult{Command: command, Error: err.Error()}, nil
+		return &sandbox.ExecResult{Command: command, Error: err.Error()}, nil
 	}
 
 	// Get executor from context or default to local
-	var executor pkgexec.Executor
+	var executor sandbox.Executor
 	if v := ctx.Value(ExecutorKey); v != nil {
-		executor = v.(pkgexec.Executor)
+		executor = v.(sandbox.Executor)
 	} else {
-		executor = pkgexec.NewLocalExecutor()
+		executor = sandbox.NewLocalExecutor()
 	}
 
 	// Prepare environment
@@ -123,7 +110,7 @@ func (t *BashTool) Run(ctx context.Context, args map[string]any) (any, error) {
 		env = append(env, "KUBECONFIG="+kubeconfig)
 	}
 
-	return ExecuteWithStreamingHandling(ctx, command, env, workDir, executor)
+	return ExecuteWithStreamingHandling(ctx, executor, command, workDir, env, DetectKubectlStreaming)
 }
 
 func validateCommand(command string) error {

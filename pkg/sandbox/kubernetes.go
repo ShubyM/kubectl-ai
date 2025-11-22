@@ -37,8 +37,8 @@ import (
 	"k8s.io/client-go/tools/remotecommand"
 )
 
-// Sandbox represents a Kubernetes-based sandboxed execution environment
-type Sandbox struct {
+// KubernetesSandbox represents a Kubernetes-based sandboxed execution environment
+type KubernetesSandbox struct {
 	name       string
 	namespace  string
 	image      string
@@ -47,10 +47,42 @@ type Sandbox struct {
 	config     *rest.Config
 }
 
+// Execute executes the command in the sandbox.
+func (s *KubernetesSandbox) Execute(ctx context.Context, command string, env []string, workDir string) (*ExecResult, error) {
+	fullCommand := command
+
+	if workDir != "" {
+		fullCommand = fmt.Sprintf("cd %q && %s", workDir, fullCommand)
+	}
+
+	for _, envVar := range env {
+		fullCommand = fmt.Sprintf("export %s; %s", envVar, fullCommand)
+	}
+
+	cmd := s.CommandContext(ctx, fullCommand)
+	output, err := cmd.CombinedOutput()
+
+	result := &ExecResult{
+		Command: command,
+		Stdout:  string(output),
+	}
+	if err != nil {
+		result.Error = err.Error()
+		result.ExitCode = 1
+	}
+
+	return result, nil
+}
+
+// Close cleans up the sandbox resources.
+func (s *KubernetesSandbox) Close(ctx context.Context) error {
+	return s.Delete(ctx)
+}
+
 // Cmd represents a command to be executed in a sandbox
 // It follows the same interface pattern as exec.Cmd
 type Cmd struct {
-	sandbox *Sandbox
+	sandbox *KubernetesSandbox
 	command []string
 	ctx     context.Context
 
@@ -60,12 +92,12 @@ type Cmd struct {
 	Stderr io.Writer
 }
 
-// Option represents a configuration option for Sandbox
-type Option func(*Sandbox) error
+// Option represents a configuration option for KubernetesSandbox
+type Option func(*KubernetesSandbox) error
 
-// New creates a new Sandbox instance with the given name and options
-func New(name string, opts ...Option) (*Sandbox, error) {
-	s := &Sandbox{
+// NewKubernetesSandbox creates a new KubernetesSandbox instance with the given name and options
+func NewKubernetesSandbox(name string, opts ...Option) (*KubernetesSandbox, error) {
+	s := &KubernetesSandbox{
 		name:      name,
 		namespace: "computer", // default namespace
 	}
@@ -96,7 +128,7 @@ func New(name string, opts ...Option) (*Sandbox, error) {
 
 // WithKubeconfig sets the kubeconfig file path
 func WithKubeconfig(kubeconfig string) Option {
-	return func(s *Sandbox) error {
+	return func(s *KubernetesSandbox) error {
 		s.kubeconfig = kubeconfig
 		return nil
 	}
@@ -104,7 +136,7 @@ func WithKubeconfig(kubeconfig string) Option {
 
 // WithName sets the sandbox name (deprecated - use constructor parameter instead)
 func WithName(name string) Option {
-	return func(s *Sandbox) error {
+	return func(s *KubernetesSandbox) error {
 		s.name = name
 		return nil
 	}
@@ -112,7 +144,7 @@ func WithName(name string) Option {
 
 // WithNamespace sets the namespace
 func WithNamespace(namespace string) Option {
-	return func(s *Sandbox) error {
+	return func(s *KubernetesSandbox) error {
 		s.namespace = namespace
 		return nil
 	}
@@ -120,7 +152,7 @@ func WithNamespace(namespace string) Option {
 
 // WithImage sets the container image
 func WithImage(image string) Option {
-	return func(s *Sandbox) error {
+	return func(s *KubernetesSandbox) error {
 		s.image = image
 		return nil
 	}
@@ -128,7 +160,7 @@ func WithImage(image string) Option {
 
 // Command creates a new Cmd to execute the given command in the sandbox
 // This follows the same interface as exec.Command
-func (s *Sandbox) Command(name string, arg ...string) *Cmd {
+func (s *KubernetesSandbox) Command(name string, arg ...string) *Cmd {
 	cmd := &Cmd{
 		sandbox: s,
 		command: append([]string{name}, arg...),
@@ -138,7 +170,7 @@ func (s *Sandbox) Command(name string, arg ...string) *Cmd {
 }
 
 // CommandContext creates a new Cmd with a context
-func (s *Sandbox) CommandContext(ctx context.Context, name string, arg ...string) *Cmd {
+func (s *KubernetesSandbox) CommandContext(ctx context.Context, name string, arg ...string) *Cmd {
 	cmd := &Cmd{
 		sandbox: s,
 		command: append([]string{name}, arg...),
@@ -149,7 +181,7 @@ func (s *Sandbox) CommandContext(ctx context.Context, name string, arg ...string
 
 // Delete removes the sandbox pod and its associated resources, waiting for them to be fully terminated.
 // It does not return an error if the resources are already deleted.
-func (s *Sandbox) Delete(ctx context.Context) error {
+func (s *KubernetesSandbox) Delete(ctx context.Context) error {
 	var errs []string
 
 	// 1. Initiate deletion of the Pod with a zero grace period for faster removal.
@@ -386,7 +418,7 @@ users:
 }
 
 // deleteKubeconfigMap cleans up the ConfigMap created for the pod.
-func (s *Sandbox) deleteKubeconfigMap(ctx context.Context, name string) error {
+func (s *KubernetesSandbox) deleteKubeconfigMap(ctx context.Context, name string) error {
 	err := s.clientset.CoreV1().ConfigMaps(s.namespace).Delete(ctx, name, metav1.DeleteOptions{})
 	if err != nil && !errors.IsNotFound(err) {
 		return fmt.Errorf("failed to delete kubeconfig configmap: %w", err)

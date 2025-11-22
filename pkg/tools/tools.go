@@ -27,8 +27,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/exec"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/journal"
+	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/sandbox"
 	"github.com/google/uuid"
 	"sigs.k8s.io/yaml"
 )
@@ -156,7 +156,7 @@ type InvokeToolOptions struct {
 	Kubeconfig string
 
 	// Executor is the executor for tool execution
-	Executor exec.Executor
+	Executor sandbox.Executor
 }
 
 type ToolRequestEvent struct {

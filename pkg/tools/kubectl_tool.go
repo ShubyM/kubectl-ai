@@ -16,10 +16,12 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"strings"
 
 	"github.com/GoogleCloudPlatform/kubectl-ai/gollm"
-	pkgexec "github.com/GoogleCloudPlatform/kubectl-ai/pkg/exec"
+	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/sandbox"
 )
 
 func init() {
@@ -100,25 +102,25 @@ func (t *Kubectl) Run(ctx context.Context, args map[string]any) (any, error) {
 	// Add nil check for command
 	commandVal, ok := args["command"]
 	if !ok || commandVal == nil {
-		return &pkgexec.ExecResult{Error: "kubectl command not provided or is nil"}, nil
+		return &sandbox.ExecResult{Command: "", Error: "kubectl command not provided or is nil"}, nil
 	}
 
 	command, ok := commandVal.(string)
 	if !ok {
-		return &pkgexec.ExecResult{Error: "kubectl command must be a string"}, nil
+		return &sandbox.ExecResult{Command: command, Error: "kubectl command must be a string"}, nil
 	}
 
 	// Check for interactive commands before proceeding
-	if isInteractive, err := IsInteractiveCommand(command); isInteractive {
-		return &pkgexec.ExecResult{Error: err.Error()}, nil
+	if err := validateKubectlCommand(command); err != nil {
+		return &sandbox.ExecResult{Command: command, Error: err.Error()}, nil
 	}
 
 	// Get executor from context or default to local
-	var executor pkgexec.Executor
+	var executor sandbox.Executor
 	if v := ctx.Value(ExecutorKey); v != nil {
-		executor = v.(pkgexec.Executor)
+		executor = v.(sandbox.Executor)
 	} else {
-		executor = pkgexec.NewLocalExecutor()
+		executor = sandbox.NewLocalExecutor()
 	}
 
 	// Prepare environment
@@ -131,7 +133,25 @@ func (t *Kubectl) Run(ctx context.Context, args map[string]any) (any, error) {
 		env = append(env, "KUBECONFIG="+kubeconfig)
 	}
 
-	return ExecuteWithStreamingHandling(ctx, command, env, workDir, executor)
+	return ExecuteWithStreamingHandling(ctx, executor, command, workDir, env, DetectKubectlStreaming)
+}
+
+// DetectKubectlStreaming checks if a kubectl command is a streaming command
+func DetectKubectlStreaming(command string) (bool, string) {
+	isWatch := strings.Contains(command, " get ") && strings.Contains(command, " -w")
+	isLogs := strings.Contains(command, " logs ") && strings.Contains(command, " -f")
+	isAttach := strings.Contains(command, " attach ")
+
+	if isWatch {
+		return true, "watch"
+	}
+	if isLogs {
+		return true, "logs"
+	}
+	if isAttach {
+		return true, "attach"
+	}
+	return false, ""
 }
 
 func (t *Kubectl) IsInteractive(args map[string]any) (bool, error) {
@@ -158,4 +178,14 @@ func (t *Kubectl) CheckModifiesResource(args map[string]any) string {
 	}
 
 	return kubectlModifiesResource(command)
+}
+
+func validateKubectlCommand(command string) error {
+	if strings.Contains(command, "kubectl edit") {
+		return fmt.Errorf("interactive mode not supported for kubectl, please use non-interactive commands")
+	}
+	if strings.Contains(command, "kubectl port-forward") {
+		return fmt.Errorf("port-forwarding is not allowed because assistant is running in an unattended mode, please try some other alternative")
+	}
+	return nil
 }

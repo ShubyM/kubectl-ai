@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package exec
+package sandbox
 
 import (
 	"bytes"
@@ -28,16 +28,16 @@ const (
 	defaultBashBin = "/bin/bash"
 )
 
-// LocalExecutor executes commands locally using os/exec.
-type LocalExecutor struct{}
+// Local executes commands locally.
+type Local struct{}
 
 // NewLocalExecutor creates a new LocalExecutor.
-func NewLocalExecutor() *LocalExecutor {
-	return &LocalExecutor{}
+func NewLocalExecutor() *Local {
+	return &Local{}
 }
 
 // Execute executes the command locally.
-func (e *LocalExecutor) Execute(ctx context.Context, command string, env []string, workDir string) (*ExecResult, error) {
+func (e *Local) Execute(ctx context.Context, command string, env []string, workDir string) (*ExecResult, error) {
 	// Use the provided context directly
 	cmdCtx := ctx
 
@@ -74,6 +74,11 @@ func (e *LocalExecutor) Execute(ctx context.Context, command string, env []strin
 	}
 
 	return result, nil
+}
+
+// Close is a no-op for Local executor.
+func (e *Local) Close(ctx context.Context) error {
+	return nil
 }
 
 // Find the bash executable path using exec.LookPath.

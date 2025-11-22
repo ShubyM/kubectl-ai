@@ -16,24 +16,28 @@ package tools
 
 import (
 	"context"
-	"strings"
 	"time"
 
-	pkgexec "github.com/GoogleCloudPlatform/kubectl-ai/pkg/exec"
+	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/sandbox"
 )
+
+// StreamDetector determines if a command is a streaming command and returns the stream type.
+// It returns (true, streamType) if it is a streaming command, and (false, "") otherwise.
+type StreamDetector func(command string) (isStreaming bool, streamType string)
 
 // ExecuteWithStreamingHandling executes a command using the provided executor,
 // handling streaming commands (watch, logs -f, attach) by applying a timeout
 // and capturing partial output.
-func ExecuteWithStreamingHandling(ctx context.Context, command string, env []string, workDir string, executor pkgexec.Executor) (*pkgexec.ExecResult, error) {
-	isWatch := strings.Contains(command, " get ") && strings.Contains(command, " -w")
-	isLogs := strings.Contains(command, " logs ") && strings.Contains(command, " -f")
-	isAttach := strings.Contains(command, " attach ")
+func ExecuteWithStreamingHandling(ctx context.Context, executor sandbox.Executor, command string, workDir string, env []string, detector StreamDetector) (*sandbox.ExecResult, error) {
+	isStreaming, streamType := false, ""
+	if detector != nil {
+		isStreaming, streamType = detector(command)
+	}
 
 	var cmdCtx context.Context
 	var cancel context.CancelFunc
 
-	if isWatch || isLogs || isAttach {
+	if isStreaming {
 		// Create a context with timeout for streaming commands
 		cmdCtx, cancel = context.WithTimeout(ctx, 7*time.Second)
 		defer cancel()
@@ -47,24 +51,18 @@ func ExecuteWithStreamingHandling(ctx context.Context, command string, env []str
 
 	// If executor returns nil result on error (it shouldn't, but let's be safe), create one
 	if result == nil {
-		result = &pkgexec.ExecResult{Command: command}
+		result = &sandbox.ExecResult{Command: command}
 	}
 
-	if isWatch || isLogs || isAttach {
+	if isStreaming {
 		if cmdCtx.Err() == context.DeadlineExceeded {
 			// Timeout is expected for streaming commands
 			result.StreamType = "timeout"
 			result.Error = "Timeout reached after 7 seconds"
 			// Clear the error if it was just the timeout
 			err = nil
-			// Determine stream type
-			if isWatch {
-				result.StreamType = "watch"
-			} else if isLogs {
-				result.StreamType = "logs"
-			} else if isAttach {
-				result.StreamType = "attach"
-			}
+			// Set the detected stream type
+			result.StreamType = streamType
 			return result, nil
 		}
 	}

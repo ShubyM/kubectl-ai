@@ -14,23 +14,27 @@
 
 //go:build !darwin
 
-package exec
+package sandbox
 
 import (
 	"context"
 	"fmt"
 )
 
-// SeatbeltExecutor executes commands locally using os/exec wrapped in sandbox-exec.
-type SeatbeltExecutor struct {
-}
+// Seatbelt executes commands in a seatbelt sandbox.
+type Seatbelt struct{}
 
 // NewSeatbeltExecutor creates a new SeatbeltExecutor.
-func NewSeatbeltExecutor() *SeatbeltExecutor {
-	return &SeatbeltExecutor{}
+func NewSeatbeltExecutor() *Seatbelt {
+	return &Seatbelt{}
 }
 
-// Execute executes the command locally wrapped in sandbox-exec.
-func (e *SeatbeltExecutor) Execute(ctx context.Context, command string, env []string, workDir string) (*ExecResult, error) {
-	return nil, fmt.Errorf("SeatbeltExecutor is only supported on macOS")
+// Execute executes the command in the seatbelt sandbox.
+func (e *Seatbelt) Execute(ctx context.Context, command string, env []string, workDir string) (*ExecResult, error) {
+	return nil, fmt.Errorf("seatbelt sandbox is only supported on macOS")
+}
+
+// Close is a no-op for Seatbelt executor.
+func (e *Seatbelt) Close(ctx context.Context) error {
+	return nil
 }

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package exec
+package sandbox
 
 import (
 	"context"
@@ -23,6 +23,9 @@ import (
 type Executor interface {
 	// Execute runs a command and returns the result.
 	Execute(ctx context.Context, command string, env []string, workDir string) (*ExecResult, error)
+
+	// Close cleans up any resources associated with the executor.
+	Close(ctx context.Context) error
 }
 
 // ExecResult represents the result of a command execution.
