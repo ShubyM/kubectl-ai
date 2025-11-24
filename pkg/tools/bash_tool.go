@@ -26,10 +26,6 @@ import (
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/sandbox"
 )
 
-func init() {
-	RegisterTool(&BashTool{})
-}
-
 const (
 	defaultBashBin = "/bin/bash"
 )
@@ -48,7 +44,13 @@ func expandShellVar(value string) (string, error) {
 	return os.ExpandEnv(value), nil
 }
 
-type BashTool struct{}
+type BashTool struct {
+	executor sandbox.Executor
+}
+
+func NewBashTool(executor sandbox.Executor) *BashTool {
+	return &BashTool{executor: executor}
+}
 
 func (t *BashTool) Name() string {
 	return "bash"
@@ -92,14 +94,6 @@ func (t *BashTool) Run(ctx context.Context, args map[string]any) (any, error) {
 		return &sandbox.ExecResult{Command: command, Error: err.Error()}, nil
 	}
 
-	// Get executor from context or default to local
-	var executor sandbox.Executor
-	if v := ctx.Value(ExecutorKey); v != nil {
-		executor = v.(sandbox.Executor)
-	} else {
-		executor = sandbox.NewLocalExecutor()
-	}
-
 	// Prepare environment
 	env := os.Environ()
 	if kubeconfig != "" {
@@ -110,7 +104,7 @@ func (t *BashTool) Run(ctx context.Context, args map[string]any) (any, error) {
 		env = append(env, "KUBECONFIG="+kubeconfig)
 	}
 
-	return ExecuteWithStreamingHandling(ctx, executor, command, workDir, env, DetectKubectlStreaming)
+	return ExecuteWithStreamingHandling(ctx, t.executor, command, workDir, env, DetectKubectlStreaming)
 }
 
 func validateCommand(command string) error {

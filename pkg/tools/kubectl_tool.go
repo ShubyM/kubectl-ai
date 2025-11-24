@@ -24,11 +24,13 @@ import (
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/sandbox"
 )
 
-func init() {
-	RegisterTool(&Kubectl{})
+type Kubectl struct {
+	executor sandbox.Executor
 }
 
-type Kubectl struct{}
+func NewKubectlTool(executor sandbox.Executor) *Kubectl {
+	return &Kubectl{executor: executor}
+}
 
 func (t *Kubectl) Name() string {
 	return "kubectl"
@@ -115,14 +117,6 @@ func (t *Kubectl) Run(ctx context.Context, args map[string]any) (any, error) {
 		return &sandbox.ExecResult{Command: command, Error: err.Error()}, nil
 	}
 
-	// Get executor from context or default to local
-	var executor sandbox.Executor
-	if v := ctx.Value(ExecutorKey); v != nil {
-		executor = v.(sandbox.Executor)
-	} else {
-		executor = sandbox.NewLocalExecutor()
-	}
-
 	// Prepare environment
 	env := os.Environ()
 	if kubeconfig != "" {
@@ -133,7 +127,7 @@ func (t *Kubectl) Run(ctx context.Context, args map[string]any) (any, error) {
 		env = append(env, "KUBECONFIG="+kubeconfig)
 	}
 
-	return ExecuteWithStreamingHandling(ctx, executor, command, workDir, env, DetectKubectlStreaming)
+	return ExecuteWithStreamingHandling(ctx, t.executor, command, workDir, env, DetectKubectlStreaming)
 }
 
 // DetectKubectlStreaming checks if a kubectl command is a streaming command

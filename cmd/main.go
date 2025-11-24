@@ -128,7 +128,7 @@ type Options struct {
 	ShowToolOutput bool `json:"showToolOutput,omitempty"`
 
 	// Sandbox enables execution of tools in a sandbox environment.
-	// Supported values: "cluster", "mac".
+	// Supported values: "k8s", "seatbelt".
 	// If empty, tools are executed locally.
 	Sandbox string `json:"sandbox,omitempty"`
 
@@ -328,7 +328,7 @@ func (opt *Options) bindCLIFlags(f *pflag.FlagSet) error {
 	f.BoolVar(&opt.SkipVerifySSL, "skip-verify-ssl", opt.SkipVerifySSL, "skip verifying the SSL certificate of the LLM provider")
 	f.BoolVar(&opt.ShowToolOutput, "show-tool-output", opt.ShowToolOutput, "show tool output in the terminal UI")
 
-	f.StringVar(&opt.Sandbox, "sandbox", opt.Sandbox, "execute tools in a sandbox environment (cluster, mac)")
+	f.StringVar(&opt.Sandbox, "sandbox", opt.Sandbox, "execute tools in a sandbox environment (k8s, seatbelt)")
 	f.StringVar(&opt.SandboxImage, "sandbox-image", opt.SandboxImage, "container image to use for the sandbox")
 
 	f.StringVar(&opt.ResumeSession, "resume-session", opt.ResumeSession, "ID of session to resume (use 'latest' for the most recent session)")

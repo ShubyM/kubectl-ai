@@ -108,7 +108,6 @@ type Agent struct {
 
 	workDir string
 
-
 	// executor is the executor for tool execution
 	executor sandbox.Executor
 
@@ -270,7 +269,7 @@ func (s *Agent) Init(ctx context.Context) error {
 	}
 
 	switch s.Sandbox {
-	case "cluster":
+	case "k8s":
 		sandboxName := fmt.Sprintf("kubectl-ai-sandbox-%s", uuid.New().String()[:8])
 
 		// Use default image if not specified
@@ -288,11 +287,10 @@ func (s *Agent) Init(ctx context.Context) error {
 			return fmt.Errorf("failed to create sandbox: %w", err)
 		}
 
-
 		s.executor = sb
 		log.Info("Created sandbox", "name", sandboxName, "image", sandboxImage)
 
-	case "mac":
+	case "seatbelt":
 		if runtime.GOOS != "darwin" {
 			return fmt.Errorf("seatbelt sandbox is only supported on macOS")
 		}
@@ -321,6 +319,13 @@ func (s *Agent) Init(ctx context.Context) error {
 		}
 	}
 	s.workDir = workDir
+
+	// Register tools with executor if none registered yet
+	if len(s.Tools.AllTools()) == 0 {
+		s.Tools.Init()
+		s.Tools.RegisterTool(tools.NewBashTool(s.executor))
+		s.Tools.RegisterTool(tools.NewKubectlTool(s.executor))
+	}
 
 	return nil
 }
