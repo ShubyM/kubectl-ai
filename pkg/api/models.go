@@ -19,15 +19,16 @@ import (
 )
 
 type Session struct {
-	ID           string
-	Messages     []*Message
-	AgentState   AgentState
-	CreatedAt    time.Time
-	LastModified time.Time
+	ID               string
+	ProviderID       string
+	ModelID          string
+	Messages         []*Message
+	AgentState       AgentState
+	CreatedAt        time.Time
+	LastModified     time.Time
+	ChatMessageStore ChatMessageStore
 	// MCP status information
 	MCPStatus *MCPStatus
-	// ChatMessageStore is an interface that allows the session to store and retrieve chat messages.
-	ChatMessageStore ChatMessageStore
 }
 
 type AgentState string
@@ -123,5 +124,8 @@ type ChatMessageStore interface {
 }
 
 func (s *Session) AllMessages() []*Message {
+	if s.ChatMessageStore == nil {
+		return nil
+	}
 	return s.ChatMessageStore.ChatMessages()
 }

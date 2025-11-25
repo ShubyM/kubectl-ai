@@ -31,14 +31,6 @@ const (
 	historyFileName  = "history.json"
 )
 
-// Metadata contains metadata about a session
-type Metadata struct {
-	ProviderID   string    `json:"providerID"`
-	ModelID      string    `json:"modelID"`
-	CreatedAt    time.Time `json:"createdAt"`
-	LastAccessed time.Time `json:"lastAccessed"`
-}
-
 // Session represents a single chat session.
 type Session struct {
 	ID   string
