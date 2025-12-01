@@ -186,7 +186,7 @@ func (o *Options) InitDefaults() {
 	o.NewSession = false
 	o.ListSessions = false
 	o.DeleteSession = ""
-	o.SessionBackend = "memory"
+	o.SessionBackend = ""
 
 	// By default, hide tool outputs
 	o.ShowToolOutput = false

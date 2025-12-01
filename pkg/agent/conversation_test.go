@@ -224,7 +224,7 @@ func TestHandleMetaQuery(t *testing.T) {
 					t.Fatalf("creating session: %v", err)
 				}
 
-				a := &Agent{}
+				a := &Agent{SessionBackend: "memory"}
 				a.Session = &api.Session{ChatMessageStore: sessions.NewInMemoryChatStore()}
 				return a
 			},

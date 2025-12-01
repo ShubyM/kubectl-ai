@@ -13,11 +13,20 @@ type SessionManager struct {
 }
 
 func NewSessionManager(backend string) (*SessionManager, error) {
+	var store Store
+	var err error
+
 	if backend == "" {
-		backend = "memory"
+		// Try filesystem first
+		store, err = NewStore("filesystem")
+		if err != nil {
+			// Fallback to memory
+			store, err = NewStore("memory")
+		}
+	} else {
+		store, err = NewStore(backend)
 	}
 
-	store, err := NewStore(backend)
 	if err != nil {
 		return nil, err
 	}
