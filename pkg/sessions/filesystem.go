@@ -15,6 +15,7 @@
 package sessions
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"os"
@@ -171,13 +172,52 @@ func (s *FileChatMessageStore) AddChatMessage(record *api.Message) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	messages, err := s.readMessages()
+	// Ensure directory exists
+	if err := os.MkdirAll(s.Path, 0o755); err != nil {
+		return err
+	}
+
+	path := s.HistoryPath()
+
+	// Check for legacy format and migrate if needed
+	isLegacy := false
+	if f, err := os.Open(path); err == nil {
+		buf := make([]byte, 1)
+		if _, err := f.Read(buf); err == nil && buf[0] == '[' {
+			isLegacy = true
+		}
+		f.Close()
+	}
+
+	if isLegacy {
+		// Read all messages (handles legacy format)
+		messages, err := s.readMessages()
+		if err != nil {
+			return err
+		}
+		messages = append(messages, record)
+		return s.writeMessages(messages)
+	}
+
+	// Normal append for JSONL or new files
+	data, err := json.Marshal(record)
 	if err != nil {
 		return err
 	}
 
-	messages = append(messages, record)
-	return s.writeMessages(messages)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	if _, err := f.Write(data); err != nil {
+		return err
+	}
+	if _, err := f.WriteString("\n"); err != nil {
+		return err
+	}
+	return nil
 }
 
 // SetChatMessages replaces the history file with the provided messages.
@@ -210,22 +250,66 @@ func (s *FileChatMessageStore) ClearChatMessages() error {
 
 func (s *FileChatMessageStore) readMessages() ([]*api.Message, error) {
 	path := s.HistoryPath()
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return []*api.Message{}, nil
 	}
 	if err != nil {
 		return nil, err
 	}
+	defer f.Close()
 
-	var messages []*api.Message
-	if len(data) == 0 {
+	// Check if the file is empty
+	stat, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if stat.Size() == 0 {
 		return []*api.Message{}, nil
 	}
 
-	if err := json.Unmarshal(data, &messages); err != nil {
+	// Peek at the first byte to determine format
+	// If it starts with '[', it's a legacy JSON array
+	// Otherwise, assume JSONL
+	buf := make([]byte, 1)
+	if _, err := f.Read(buf); err != nil {
 		return nil, err
 	}
+	// Reset file pointer
+	if _, err := f.Seek(0, 0); err != nil {
+		return nil, err
+	}
+
+	var messages []*api.Message
+
+	if buf[0] == '[' {
+		// Legacy JSON array format
+		decoder := json.NewDecoder(f)
+		if err := decoder.Decode(&messages); err != nil {
+			return nil, err
+		}
+		return messages, nil
+	}
+
+	// JSONL format
+	scanner := bufio.NewScanner(f)
+
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var msg api.Message
+		if err := json.Unmarshal(line, &msg); err != nil {
+			return nil, err
+		}
+		messages = append(messages, &msg)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
 	return messages, nil
 }
 
@@ -234,10 +318,23 @@ func (s *FileChatMessageStore) writeMessages(messages []*api.Message) error {
 		return err
 	}
 
-	data, err := json.Marshal(messages)
+	f, err := os.OpenFile(s.HistoryPath(), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
 		return err
 	}
+	defer f.Close()
 
-	return os.WriteFile(s.HistoryPath(), data, 0o644)
+	for _, msg := range messages {
+		data, err := json.Marshal(msg)
+		if err != nil {
+			return err
+		}
+		if _, err := f.Write(data); err != nil {
+			return err
+		}
+		if _, err := f.WriteString("\n"); err != nil {
+			return err
+		}
+	}
+	return nil
 }

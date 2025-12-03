@@ -244,7 +244,7 @@ func (u *HTMLUserInterface) handleSessionStream(w http.ResponseWriter, req *http
 	var initialData []byte
 	var err error
 
-	if u.agent.Session().ID == id {
+	if u.agent.GetSession().ID == id {
 		initialData, err = u.getCurrentStateJSON()
 	} else {
 		// Load from storage
@@ -279,7 +279,7 @@ func (u *HTMLUserInterface) handleSessionStream(w http.ResponseWriter, req *http
 			// TODO: Filter messages by session ID if possible?
 			// For now, we broadcast all messages. The client can filter.
 			// Or we can parse the msg (inefficient) or change Broadcaster to support topics.
-			// Given time constraints, we rely on client filtering for now, 
+			// Given time constraints, we rely on client filtering for now,
 			// but we ensure the initial state is correct.
 			fmt.Fprintf(w, "data: %s\n\n", msg)
 			flusher.Flush()
@@ -376,7 +376,7 @@ func (u *HTMLUserInterface) handleRenameSession(w http.ResponseWriter, req *http
 	// But Agent.Session() returns a copy. The agent holds the pointer.
 	// If we updated the store, the agent might overwrite it if it saves?
 	// Ideally we update the agent's session if it matches.
-	if u.agent.Session().ID == id {
+	if u.agent.GetSession().ID == id {
 		// We can't easily update the agent's private session struct from here without a method.
 		// But since we updated the store, and the agent saves to the store...
 		// Actually, if the agent saves, it might overwrite the name with the old name if it has it in memory.
@@ -407,7 +407,7 @@ func (u *HTMLUserInterface) handleDeleteSession(w http.ResponseWriter, req *http
 		return
 	}
 
-	if u.agent.Session().ID == id {
+	if u.agent.GetSession().ID == id {
 		http.Error(w, "cannot delete active session", http.StatusConflict)
 		return
 	}
@@ -457,7 +457,7 @@ func (u *HTMLUserInterface) handlePOSTSendMessage(w http.ResponseWriter, req *ht
 	}
 
 	// Check if we need to switch session
-	if u.agent.Session().ID != id {
+	if u.agent.GetSession().ID != id {
 		// Try to switch
 		if u.agent.AgentState() != api.AgentStateIdle && u.agent.AgentState() != api.AgentStateDone && u.agent.AgentState() != api.AgentStateExited {
 			http.Error(w, "agent is busy with another session", http.StatusConflict)
@@ -488,7 +488,7 @@ func (u *HTMLUserInterface) handlePOSTSendMessage(w http.ResponseWriter, req *ht
 }
 
 func (u *HTMLUserInterface) getCurrentStateJSON() ([]byte, error) {
-	return u.getSessionStateJSON(u.agent.Session())
+	return u.getSessionStateJSON(u.agent.GetSession())
 }
 
 func (u *HTMLUserInterface) getSessionStateJSON(session *api.Session) ([]byte, error) {
@@ -502,7 +502,7 @@ func (u *HTMLUserInterface) getSessionStateJSON(session *api.Session) ([]byte, e
 		messages = append(messages, message)
 	}
 
-	agentState := session.AgentState
+	agentState := u.agent.GetSession().AgentState
 
 	data := map[string]interface{}{
 		"messages":   messages,
@@ -541,7 +541,7 @@ func (u *HTMLUserInterface) handlePOSTChooseOption(w http.ResponseWriter, req *h
 	}
 
 	// Check if we need to switch session (shouldn't happen for choice usually, but good to be safe)
-	if u.agent.Session().ID != id {
+	if u.agent.GetSession().ID != id {
 		http.Error(w, "session mismatch", http.StatusConflict)
 		return
 	}

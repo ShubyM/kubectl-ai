@@ -29,7 +29,6 @@ import (
 	"slices"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/GoogleCloudPlatform/kubectl-ai/gollm"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/agent"
@@ -39,7 +38,6 @@ import (
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/tools"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/ui"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/ui/html"
-	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
@@ -186,7 +184,7 @@ func (o *Options) InitDefaults() {
 	o.NewSession = false
 	o.ListSessions = false
 	o.DeleteSession = ""
-	o.SessionBackend = ""
+	o.SessionBackend = "memory"
 
 	// By default, hide tool outputs
 	o.ShowToolOutput = false
@@ -439,7 +437,7 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 					if err != nil {
 						return fmt.Errorf("failed to create new session: %w", err)
 					}
-					klog.Infof("Created new session: %s\n", session.ID)
+					klog.Infof("No previous session found. Created new session: %s\n", session.ID)
 				}
 			} else {
 				sessionID := opt.ResumeSession
@@ -455,23 +453,12 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 				}
 			}
 		}
-	} else {
-		session = &api.Session{
-			ID:               uuid.New().String(),
-			ProviderID:       opt.ProviderID,
-			ModelID:          opt.ModelID,
-			AgentState:       api.AgentStateIdle,
-			CreatedAt:        time.Now(),
-			LastModified:     time.Now(),
-			ChatMessageStore: sessions.NewInMemoryChatStore(),
-		}
 	}
 
-	if session != nil && session.ChatMessageStore == nil {
-		session.ChatMessageStore = sessions.NewInMemoryChatStore()
+	var chatStore api.ChatMessageStore
+	if session != nil {
+		chatStore = session.ChatMessageStore
 	}
-
-	chatStore := session.ChatMessageStore
 
 	var recorder journal.Recorder
 	if opt.TracePath != "" {
@@ -504,13 +491,13 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 		MCPClientEnabled:   opt.MCPClient,
 		RunOnce:            opt.Quiet,
 		InitialQuery:       queryFromCmd,
-		SessionBackend:     opt.SessionBackend,
 		ChatMessageStore:   chatStore,
 		Sandbox:            opt.Sandbox,
 		SandboxImage:       opt.SandboxImage,
+		Session:            session,
+		SessionBackend:     opt.SessionBackend,
 	}
 
-	k8sAgent.SetSession(session)
 	err = k8sAgent.Init(ctx)
 	if err != nil {
 		return fmt.Errorf("starting k8s agent: %w", err)
