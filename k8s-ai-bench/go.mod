@@ -1,4 +1,4 @@
-module github.com/GoogleCloudPlatform/kubectl-ai/k8s-bench
+module github.com/GoogleCloudPlatform/kubectl-ai/k8s-ai-bench
 
 go 1.24.0
 

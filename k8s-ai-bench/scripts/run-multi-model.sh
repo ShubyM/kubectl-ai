@@ -9,7 +9,7 @@ VENV_PATH="/home/user/.venv/bin/activate"
 # tensor parallel number (the number of GPUs on your gce vm)
 TP=8
 
-# k8s-bench configuration
+# k8s-ai-bench configuration
 ITERATIONS=5
 CONCURRENCY=5
 CLUSTER_CREATION_POLICY="AlwaysCreate"
@@ -39,7 +39,7 @@ VLLM_STOP_CMD="pkill -f 'vllm serve'"
 # Arguments:
 #   $1: Model Name as it appears on huggingface (e.g., "openai/gpt-oss-20b", "Qwen/Qwen3-Next-80B-A3B-Instruct")
 #   $2: The command to serve that model with vllm
-#   $3: The command to run k8s-bench
+#   $3: The command to run k8s-ai-bench
 run_model_evaluation() {
     local model_name="$1"
     local start_cmd="$2"
