@@ -161,7 +161,7 @@ func (c *Agent) addMessage(source api.MessageSource, messageType api.MessageType
 		Timestamp: time.Now(),
 	}
 
-	// session should always have a ChatMessageStore at this point 
+	// session should always have a ChatMessageStore at this point
 	c.Session.ChatMessageStore.AddChatMessage(message)
 	c.Session.LastModified = time.Now()
 	c.Output <- message
