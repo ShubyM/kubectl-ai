@@ -111,9 +111,9 @@ type Agent struct {
 	// executor is the executor for tool execution
 	executor sandbox.Executor
 
-	// Session optionally provides a session to use.
+	// session optionally provides a session to use.
 	// This is used by the UI to track the state of the agent and the conversation.
-	Session *api.Session
+	session *api.Session
 
 	// protects session from concurrent access
 	sessionMu sync.Mutex
@@ -137,6 +137,23 @@ type Agent struct {
 // Assert InMemoryChatStore implements ChatMessageStore
 var _ api.ChatMessageStore = &sessions.InMemoryChatStore{}
 
+func (s *Agent) Session() *api.Session {
+	s.sessionMu.Lock()
+	defer s.sessionMu.Unlock()
+
+	// Create a shallow copy of the session struct. The Messages slice header
+	// is also copied, providing the caller with a snapshot of the messages
+	// at this point in time. The UI should treat the messages as read-only
+	// to avoid race conditions.
+	sessionCopy := *s.session
+	return &sessionCopy
+}
+
+func (s *Agent) SetSession(session *api.Session) {
+	s.sessionMu.Lock()
+	defer s.sessionMu.Unlock()
+	s.session = session
+}
 
 // addMessage creates a new message, adds it to the session, and sends it to the output channel
 func (c *Agent) addMessage(source api.MessageSource, messageType api.MessageType, payload any) *api.Message {
@@ -149,11 +166,11 @@ func (c *Agent) addMessage(source api.MessageSource, messageType api.MessageType
 		Payload:   payload,
 		Timestamp: time.Now(),
 	}
-	if c.Session.ChatMessageStore != nil {
-		c.Session.ChatMessageStore.AddChatMessage(message)
+	if c.session.ChatMessageStore != nil {
+		c.session.ChatMessageStore.AddChatMessage(message)
 	}
 
-	c.Session.LastModified = time.Now()
+	c.session.LastModified = time.Now()
 	c.Output <- message
 	return message
 }
@@ -165,8 +182,8 @@ func (c *Agent) setAgentState(newState api.AgentState) {
 	currentState := c.agentState()
 	if currentState != newState {
 		klog.Infof("Agent state changing from %s to %s", currentState, newState)
-		c.Session.AgentState = newState
-		c.Session.LastModified = time.Now()
+		c.session.AgentState = newState
+		c.session.LastModified = time.Now()
 	}
 }
 
@@ -179,7 +196,7 @@ func (c *Agent) AgentState() api.AgentState {
 // agentState returns the agent state without locking.
 // The caller is responsible for locking.
 func (c *Agent) agentState() api.AgentState {
-	return c.Session.AgentState
+	return c.session.AgentState
 }
 
 func (s *Agent) Init(ctx context.Context) error {
@@ -200,27 +217,27 @@ func (s *Agent) Init(ctx context.Context) error {
 		s.SessionBackend = "memory"
 	}
 
-	if s.Session != nil {
-		if s.Session.ChatMessageStore == nil {
-			s.Session.ChatMessageStore = sessions.NewInMemoryChatStore()
+	if s.session != nil {
+		if s.session.ChatMessageStore == nil {
+			s.session.ChatMessageStore = sessions.NewInMemoryChatStore()
 		}
-		s.ChatMessageStore = s.Session.ChatMessageStore
-		if s.Session.ID == "" {
-			s.Session.ID = uuid.New().String()
+		s.ChatMessageStore = s.session.ChatMessageStore
+		if s.session.ID == "" {
+			s.session.ID = uuid.New().String()
 		}
-		if s.Session.CreatedAt.IsZero() {
-			s.Session.CreatedAt = time.Now()
+		if s.session.CreatedAt.IsZero() {
+			s.session.CreatedAt = time.Now()
 		}
-		if s.Session.LastModified.IsZero() {
-			s.Session.LastModified = time.Now()
+		if s.session.LastModified.IsZero() {
+			s.session.LastModified = time.Now()
 		}
-		s.Session.Messages = s.Session.ChatMessageStore.ChatMessages()
+		s.session.Messages = s.session.ChatMessageStore.ChatMessages()
 	} else {
 		if s.ChatMessageStore == nil {
 			s.ChatMessageStore = sessions.NewInMemoryChatStore()
 		}
 
-		s.Session = &api.Session{
+		s.session = &api.Session{
 			ID:               uuid.New().String(),
 			Messages:         s.ChatMessageStore.ChatMessages(),
 			AgentState:       api.AgentStateIdle,
@@ -260,7 +277,7 @@ func (s *Agent) Init(ctx context.Context) error {
 			Jitter:         true,
 		},
 	)
-	err = s.llmChat.Initialize(s.Session.ChatMessageStore.ChatMessages())
+	err = s.llmChat.Initialize(s.session.ChatMessageStore.ChatMessages())
 	if err != nil {
 		return fmt.Errorf("initializing chat session: %w", err)
 	}
@@ -407,7 +424,7 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 				c.pendingFunctionCalls = []ToolCallAnalysis{}
 			}
 		} else {
-			if len(c.Session.Messages) > 0 {
+			if len(c.session.Messages) > 0 {
 				// Resuming existing session
 				greetingMessage := "Welcome back. What can I help you with today?\n (Don't want to continue your last session? Use --new-session)"
 				c.addMessage(api.MessageSourceAgent, api.MessageTypeText, greetingMessage)
@@ -513,7 +530,7 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 							log.Error(err, "error dispatching tool calls")
 							c.setAgentState(api.AgentStateDone)
 							c.pendingFunctionCalls = []ToolCallAnalysis{}
-							c.Session.LastModified = time.Now()
+							c.session.LastModified = time.Now()
 							c.addMessage(api.MessageSourceAgent, api.MessageTypeError, "Error: "+err.Error())
 							// In RunOnce mode, exit on tool execution error
 							if c.RunOnce {
@@ -532,7 +549,7 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 						c.currIteration = c.currIteration + 1
 						c.pendingFunctionCalls = []ToolCallAnalysis{}
 						c.setAgentState(api.AgentStateRunning)
-						c.Session.LastModified = time.Now()
+						c.session.LastModified = time.Now()
 					}
 				}
 			case api.AgentStateRunning:
@@ -664,7 +681,7 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 					log.Error(err, "error analyzing tool calls")
 					c.setAgentState(api.AgentStateDone)
 					c.pendingFunctionCalls = []ToolCallAnalysis{}
-					c.Session.LastModified = time.Now()
+					c.session.LastModified = time.Now()
 					c.addMessage(api.MessageSourceAgent, api.MessageTypeError, "Error: "+err.Error())
 					c.lastErr = err
 					continue
@@ -754,7 +771,7 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 					log.Error(err, "error dispatching tool calls")
 					c.setAgentState(api.AgentStateDone)
 					c.pendingFunctionCalls = []ToolCallAnalysis{}
-					c.Session.LastModified = time.Now()
+					c.session.LastModified = time.Now()
 					c.addMessage(api.MessageSourceAgent, api.MessageTypeError, "Error: "+err.Error())
 					c.lastErr = err
 					continue
@@ -774,10 +791,10 @@ func (c *Agent) handleMetaQuery(ctx context.Context, query string) (answer strin
 	case "clear", "reset":
 		c.sessionMu.Lock()
 		// TODO: Remove this check when session persistence is default
-		if err := c.Session.ChatMessageStore.ClearChatMessages(); err != nil {
+		if err := c.session.ChatMessageStore.ClearChatMessages(); err != nil {
 			return "Failed to clear the conversation", false, err
 		}
-		c.llmChat.Initialize(c.Session.ChatMessageStore.ChatMessages())
+		c.llmChat.Initialize(c.session.ChatMessageStore.ChatMessages())
 		c.sessionMu.Unlock()
 		return "Cleared the conversation.", true, nil
 	case "exit", "quit":
@@ -794,16 +811,16 @@ func (c *Agent) handleMetaQuery(ctx context.Context, query string) (answer strin
 	case "tools":
 		return "Available tools:\n\n  - " + strings.Join(c.Tools.Names(), "\n  - ") + "\n\n", true, nil
 	case "session":
-		if c.Session == nil {
-			return "Session not found (session persistence not enabled)", true, nil
+		if c.session == nil {
+			return "session not found (session persistence not enabled)", true, nil
 		}
 		sessionInfo := fmt.Sprintf(
 			"Current session:\n\nID: %s\nCreated: %s\nLast Accessed: %s\nModel: %s\nProvider: %s\n\n",
-			c.Session.ID,
-			c.Session.CreatedAt.Format("2006-01-02 15:04:05"),
-			c.Session.LastModified.Format("2006-01-02 15:04:05"),
-			c.Session.ModelID,
-			c.Session.ProviderID,
+			c.session.ID,
+			c.session.CreatedAt.Format("2006-01-02 15:04:05"),
+			c.session.LastModified.Format("2006-01-02 15:04:05"),
+			c.session.ModelID,
+			c.session.ProviderID,
 		)
 		return sessionInfo, true, nil
 
@@ -870,15 +887,15 @@ func (c *Agent) SaveSession() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to create session manager: %w", err)
 	}
-	if c.Session != nil {
-		foundSession, _ := manager.FindSessionByID(c.Session.ID)
+	if c.session != nil {
+		foundSession, _ := manager.FindSessionByID(c.session.ID)
 		if foundSession != nil {
 			return foundSession.ID, nil
 		}
 	}
 
 	metadata := sessions.Metadata{
-		CreatedAt:    c.Session.CreatedAt,
+		CreatedAt:    c.session.CreatedAt,
 		LastAccessed: time.Now(),
 		ModelID:      c.Model,
 		ProviderID:   c.Provider,
@@ -895,11 +912,11 @@ func (c *Agent) SaveSession() (string, error) {
 	}
 
 	c.ChatMessageStore = newSession.ChatMessageStore
-	c.Session = newSession
-	c.Session.Messages = messages
+	c.session = newSession
+	c.session.Messages = messages
 
 	if c.llmChat != nil {
-		_ = c.llmChat.Initialize(c.Session.ChatMessageStore.ChatMessages())
+		_ = c.llmChat.Initialize(c.session.ChatMessageStore.ChatMessages())
 	}
 
 	return newSession.ID, nil
@@ -938,17 +955,17 @@ func (c *Agent) loadSession(sessionID string) error {
 		session.ChatMessageStore = sessions.NewInMemoryChatStore()
 	}
 
-	c.Session = session
+	c.session = session
 	c.ChatMessageStore = session.ChatMessageStore
-	c.Session.Messages = session.ChatMessageStore.ChatMessages()
-	c.Session.LastModified = time.Now()
+	c.session.Messages = session.ChatMessageStore.ChatMessages()
+	c.session.LastModified = time.Now()
 
 	if err := manager.UpdateLastAccessed(session); err != nil {
 		return fmt.Errorf("failed to update session metadata: %w", err)
 	}
 
 	if c.llmChat != nil {
-		if err := c.llmChat.Initialize(c.Session.ChatMessageStore.ChatMessages()); err != nil {
+		if err := c.llmChat.Initialize(c.session.ChatMessageStore.ChatMessages()); err != nil {
 			return fmt.Errorf("failed to re-initialize chat with new session: %w", err)
 		}
 	}

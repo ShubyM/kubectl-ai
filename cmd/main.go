@@ -504,13 +504,13 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 		MCPClientEnabled:   opt.MCPClient,
 		RunOnce:            opt.Quiet,
 		InitialQuery:       queryFromCmd,
-		Session:            session,
 		SessionBackend:     opt.SessionBackend,
 		ChatMessageStore:   chatStore,
 		Sandbox:            opt.Sandbox,
 		SandboxImage:       opt.SandboxImage,
 	}
 
+	k8sAgent.SetSession(session)
 	err = k8sAgent.Init(ctx)
 	if err != nil {
 		return fmt.Errorf("starting k8s agent: %w", err)

@@ -80,7 +80,7 @@ func (a *Agent) UpdateMCPStatus(ctx context.Context, mcpClientEnabled bool) erro
 	// Update the session with MCP status
 	a.sessionMu.Lock()
 	defer a.sessionMu.Unlock()
-	a.Session.MCPStatus = status
+	a.session.MCPStatus = status
 
 	return nil
 }
@@ -151,13 +151,13 @@ func (a *Agent) convertMCPStatus(mcpStatus *mcp.MCPStatus) *api.MCPStatus {
 func (a *Agent) GetMCPStatusText() string {
 	a.sessionMu.Lock()
 	defer a.sessionMu.Unlock()
-	if a.Session.MCPStatus == nil {
+	if a.session.MCPStatus == nil {
 		return ""
 	}
 
 	var statusText strings.Builder
 
-	status := a.Session.MCPStatus
+	status := a.session.MCPStatus
 
 	// Add summary text
 	if status.ClientEnabled && status.ConnectedCount > 0 {
