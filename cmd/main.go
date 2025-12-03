@@ -184,7 +184,7 @@ func (o *Options) InitDefaults() {
 	o.NewSession = false
 	o.ListSessions = false
 	o.DeleteSession = ""
-	o.SessionBackend = ""
+	o.SessionBackend = "memory"
 
 	// By default, hide tool outputs
 	o.ShowToolOutput = false
@@ -412,7 +412,6 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 			return fmt.Errorf("failed to create session manager: %w", err)
 		}
 
-		// Case 1: Create a completely new session
 		if opt.NewSession {
 			meta := sessions.Metadata{
 				ProviderID: opt.ProviderID,
@@ -424,14 +423,11 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 			}
 			klog.Infof("Created new session: %s\n", session.ID)
 		} else {
-			// Case 2: Resume an existing session
-			// Sub-case 2a: Resume the latest session (or default if no ID provided)
 			if opt.ResumeSession == "" || opt.ResumeSession == "latest" {
 				session, err = sessionManager.GetLatestSession()
 				if err != nil {
 					return fmt.Errorf("failed to get latest session: %w", err)
 				}
-				// If no latest session exists, fallback to creating a new one
 				if session == nil {
 					meta := sessions.Metadata{
 						ProviderID: opt.ProviderID,
@@ -444,7 +440,6 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 					klog.Infof("No previous session found. Created new session: %s\n", session.ID)
 				}
 			} else {
-				// Sub-case 2b: Resume a specific session by ID
 				sessionID := opt.ResumeSession
 				session, err = sessionManager.FindSessionByID(sessionID)
 				if err != nil {
@@ -452,7 +447,6 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 				}
 			}
 
-			// Update the last accessed time for the resumed session
 			if session != nil {
 				if err := sessionManager.UpdateLastAccessed(session); err != nil {
 					klog.Warningf("Failed to update session last accessed time: %v", err)
