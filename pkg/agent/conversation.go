@@ -426,11 +426,11 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 		} else {
 			if len(c.Session.Messages) > 0 {
 				// Resuming existing session
-				greetingMessage := "Welcome back. What can I help you with today?\n (Don't want to continue your last session? Use --new-session)"
+				greetingMessage := fmt.Sprintf("Welcome back. What can I help you with today?\n (Don't want to continue your last session? Use --new-session)\n\n%s", c.Session.String())
 				c.addMessage(api.MessageSourceAgent, api.MessageTypeText, greetingMessage)
 			} else {
 				// Starting new session
-				greetingMessage := "Hey there, what can I help you with today?"
+				greetingMessage := fmt.Sprintf("Hey there, what can I help you with today?\n\n%s", c.Session.String())
 				c.addMessage(api.MessageSourceAgent, api.MessageTypeText, greetingMessage)
 			}
 		}
@@ -811,15 +811,7 @@ func (c *Agent) handleMetaQuery(ctx context.Context, query string) (answer strin
 	case "tools":
 		return "Available tools:\n\n  - " + strings.Join(c.Tools.Names(), "\n  - ") + "\n\n", true, nil
 	case "session":
-		sessionInfo := fmt.Sprintf(
-			"Current session:\n\nID: %s\nCreated: %s\nLast Accessed: %s\nModel: %s\nProvider: %s\n\n",
-			c.Session.ID,
-			c.Session.CreatedAt.Format("2006-01-02 15:04:05"),
-			c.Session.LastModified.Format("2006-01-02 15:04:05"),
-			c.Session.ModelID,
-			c.Session.ProviderID,
-		)
-		return sessionInfo, true, nil
+		return c.Session.String(), true, nil
 
 	case "save-session":
 		savedSessionID, err := c.SaveSession()

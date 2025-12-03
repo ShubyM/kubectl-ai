@@ -15,6 +15,7 @@
 package api
 
 import (
+	"fmt"
 	"time"
 )
 
@@ -128,4 +129,9 @@ func (s *Session) AllMessages() []*Message {
 		return nil
 	}
 	return s.ChatMessageStore.ChatMessages()
+}
+
+func (s *Session) String() string {
+	return fmt.Sprintf("Session ID: %s\nProvider: %s\nModel: %s\nCreated At: %s\nLast Modified: %s\nAgent State: %s",
+		s.ID, s.ProviderID, s.ModelID, s.CreatedAt.Format(time.RFC3339), s.LastModified.Format(time.RFC3339), s.AgentState)
 }
