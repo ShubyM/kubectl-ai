@@ -1,12 +1,12 @@
-## k8s-bench
+## k8s-ai-bench
 
-`k8s-bench` is a benchmark for assessing the performance of LLM models for kubernetes related tasks.
+`k8s-ai-bench` is a benchmark for assessing the performance of LLM models for kubernetes related tasks.
 
 
 ### Usage
 
 ```sh
-# build the k8s-bench binary
+# build the k8s-ai-bench binary
 go build
 ```
 
@@ -16,19 +16,19 @@ The `run` subcommand executes the benchmark evaluations.
 
 ```sh
 # Basic usage with mandatory output directory
-./k8s-bench run --agent-bin <path/to/kubectl-ai/binary> --output-dir .build/k8sbench
+./k8s-ai-bench run --agent-bin <path/to/kubectl-ai/binary> --output-dir .build/k8s-ai-bench
 
 # Run evaluation for scale related tasks
-./k8s-bench run --agent-bin <path/to/kubectl-ai/binary> --task-pattern scale --kubeconfig <path/to/kubeconfig> --output-dir .build/k8sbench
+./k8s-ai-bench run --agent-bin <path/to/kubectl-ai/binary> --task-pattern scale --kubeconfig <path/to/kubeconfig> --output-dir .build/k8s-ai-bench
 
 # Run evaluation for a specific LLM provider and model with tool use shim enabled
-./k8s-bench run --llm-provider=grok --models=grok-3-beta --agent-bin ../kubectl-ai --task-pattern=fix-probes --enable-tool-use-shim=true --output-dir .build/k8sbench
+./k8s-ai-bench run --llm-provider=grok --models=grok-3-beta --agent-bin kubectl-ai --task-pattern=fix-probes --enable-tool-use-shim=true --output-dir .build/k8s-ai-bench
 
 # Run evaluation sequentially (one task at a time)
-./k8s-bench run --agent-bin <path/to/kubectl-ai/binary> --tasks-dir ./tasks --output-dir .build/k8sbench --concurrency 1
+./k8s-ai-bench run --agent-bin <path/to/kubectl-ai/binary> --tasks-dir ./tasks --output-dir .build/k8s-ai-bench --concurrency 1
 
 # Run evaluation with all available options
-./k8s-bench run \
+./k8s-ai-bench run \
   --agent-bin <path/to/kubectl-ai/binary> \
   --kubeconfig ~/.kube/config \
   --tasks-dir ./tasks \
@@ -38,7 +38,7 @@ The `run` subcommand executes the benchmark evaluations.
   --enable-tool-use-shim true \
   --quiet \
   --concurrency 0 \
-  --output-dir .build/k8sbench
+  --output-dir .build/k8s-ai-bench
 ```
 
 #### Available flags for `run` subcommand:
@@ -64,17 +64,17 @@ The `analyze` subcommand processes results from previous runs:
 
 ```sh
 # Analyze previous evaluation results and output in markdown format (default)
-./k8s-bench analyze --input-dir .build/k8sbench
+./k8s-ai-bench analyze --input-dir .build/k8s-ai-bench
 
 # Analyze previous evaluation results and output in JSON format
-./k8s-bench analyze --input-dir .build/k8sbench --output-format json
+./k8s-ai-bench analyze --input-dir .build/k8s-ai-bench --output-format json
 
 # Save analysis results to a file
-./k8s-bench analyze --input-dir .build/k8sbench --results-filepath ./results.md
+./k8s-ai-bench analyze --input-dir .build/k8s-ai-bench --results-filepath ./results.md
 
 # Analyze with all available options
-./k8s-bench analyze \
-  --input-dir .build/k8sbench \
+./k8s-ai-bench analyze \
+  --input-dir .build/k8s-ai-bench \
   --output-format markdown \
   --ignore-tool-use-shim true \
   --results-filepath ./detailed-analysis.md
@@ -134,7 +134,7 @@ Available flags for `run-eval-loop.sh`:
 
 #### Run evaluations
 
-The `run-evals.sh` script builds the necessary binaries and runs the evaluations a single time. You can pass arguments to the `k8s-bench run` command via the `TEST_ARGS` environment variable.
+The `run-evals.sh` script builds the necessary binaries and runs the evaluations a single time. You can pass arguments to the `k8s-ai-bench run` command via the `TEST_ARGS` environment variable.
 
 ```sh
 # Run all tasks
@@ -159,8 +159,8 @@ The `analyze-evals.sh` script analyzes the results from the previous run.
 ./dev/ci/periodics/analyze-evals.sh --show-failures
 ```
 
-The results will be saved to `.build/k8s-bench.md` and `.build/k8s-bench.json`.
+The results will be saved to `.build/k8s-ai-bench.md` and `.build/k8s-ai-bench.json`.
 
 ### Contributions
 
-We're open to contributions in k8s-bench, check out the [contributions guide.](contributing.md)
+We're open to contributions in k8s-ai-bench, check out the [contributions guide.](contributing.md)

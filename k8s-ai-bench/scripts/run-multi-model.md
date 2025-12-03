@@ -1,6 +1,6 @@
-# Running k8s-bench for multiple locally-served models with `run-multi-model.sh`
+# Running k8s-ai-bench for multiple locally-served models with `run-multi-model.sh`
 
-This document outlines the steps to run the `run-multi-model.sh` script to evaluate multiple local models with `k8s-bench`.
+This document outlines the steps to run the `run-multi-model.sh` script to evaluate multiple local models with `k8s-ai-bench`.
 
 ## Prerequisites
 
@@ -40,12 +40,12 @@ Before running the script, note the following:
 Navigate to the root of the repository and execute the script:
 
 ```bash
-./k8s-bench/scripts/run-multi-model.sh
+./k8s-ai-bench/scripts/run-multi-model.sh
 ```
 
 ## Output
 
-The script will run the `k8s-bench` evaluation for each model defined within it.
+The script will run the `k8s-ai-bench` evaluation for each model defined within it.
 
 *   **Multiple Runs:** For each run, the script creates a new output directory in .build/.
-*   **Directory Structure:** The output directories will contain the results of the `k8s-bench analyze` command for both markdown and json format, which includes detailed information about the model's performance on the benchmark tasks.
+*   **Directory Structure:** The output directories will contain the results of the `k8s-ai-bench analyze` command for both markdown and json format, which includes detailed information about the model's performance on the benchmark tasks.

@@ -137,7 +137,6 @@ type Agent struct {
 // Assert InMemoryChatStore implements ChatMessageStore
 var _ api.ChatMessageStore = &sessions.InMemoryChatStore{}
 
-
 // addMessage creates a new message, adds it to the session, and sends it to the output channel
 func (c *Agent) addMessage(source api.MessageSource, messageType api.MessageType, payload any) *api.Message {
 	c.sessionMu.Lock()
@@ -195,8 +194,6 @@ func (s *Agent) Init(ctx context.Context) error {
 	if s.InitialQuery == "" && s.RunOnce {
 		return fmt.Errorf("RunOnce mode requires an initial query to be provided")
 	}
-
-
 
 	if s.Session != nil {
 		if s.Session.ChatMessageStore == nil {

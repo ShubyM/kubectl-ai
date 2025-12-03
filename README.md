@@ -442,9 +442,9 @@ The enhanced mode provides AI clients with access to both Kubernetes operations 
 
 📖 **For detailed configuration, examples, and troubleshooting, see the [MCP Server Documentation](docs/mcp-server.md).**
 
-## k8s-bench
+## k8s-ai-bench
 
-kubectl-ai project includes [k8s-bench](./k8s-bench/README.md) - a benchmark to evaluate performance of different LLM models on Kubernetes related tasks.
+kubectl-ai project includes [k8s-ai-bench](./k8s-ai-bench/README.md) - a benchmark to evaluate performance of different LLM models on Kubernetes related tasks.
 
 ### Latest Benchmark Results (August 2025)
 
@@ -461,7 +461,7 @@ Comprehensive evaluation on identical 10-task Kubernetes benchmark with proper C
 **Test Environment**: Kind cluster v1.27.3 with Calico CNI (full NetworkPolicy support)
 **Tasks**: create-pod, create-pod-mount-configmaps, create-pod-resources-limits, create-network-policy, fix-crashloop, fix-image-pull, fix-service-routing, list-images-for-pods, scale-deployment, scale-down-deployment
 
-See [full report](./k8s-bench.md) for more details.
+See [full report](./k8s-ai-bench.md) for more details.
 
 ## Start Contributing
 
