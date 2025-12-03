@@ -29,7 +29,6 @@ import (
 	"slices"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/GoogleCloudPlatform/kubectl-ai/gollm"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/agent"
@@ -39,7 +38,6 @@ import (
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/tools"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/ui"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/ui/html"
-	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
@@ -414,6 +412,7 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 			return fmt.Errorf("failed to create session manager: %w", err)
 		}
 
+		// Case 1: Create a completely new session
 		if opt.NewSession {
 			meta := sessions.Metadata{
 				ProviderID: opt.ProviderID,
@@ -425,11 +424,14 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 			}
 			klog.Infof("Created new session: %s\n", session.ID)
 		} else {
+			// Case 2: Resume an existing session
+			// Sub-case 2a: Resume the latest session (or default if no ID provided)
 			if opt.ResumeSession == "" || opt.ResumeSession == "latest" {
 				session, err = sessionManager.GetLatestSession()
 				if err != nil {
 					return fmt.Errorf("failed to get latest session: %w", err)
 				}
+				// If no latest session exists, fallback to creating a new one
 				if session == nil {
 					meta := sessions.Metadata{
 						ProviderID: opt.ProviderID,
@@ -439,9 +441,10 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 					if err != nil {
 						return fmt.Errorf("failed to create new session: %w", err)
 					}
-					klog.Infof("Created new session: %s\n", session.ID)
+					klog.Infof("No previous session found. Created new session: %s\n", session.ID)
 				}
 			} else {
+				// Sub-case 2b: Resume a specific session by ID
 				sessionID := opt.ResumeSession
 				session, err = sessionManager.FindSessionByID(sessionID)
 				if err != nil {
@@ -449,29 +452,19 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 				}
 			}
 
+			// Update the last accessed time for the resumed session
 			if session != nil {
 				if err := sessionManager.UpdateLastAccessed(session); err != nil {
 					klog.Warningf("Failed to update session last accessed time: %v", err)
 				}
 			}
 		}
-	} else {
-		session = &api.Session{
-			ID:               uuid.New().String(),
-			ProviderID:       opt.ProviderID,
-			ModelID:          opt.ModelID,
-			AgentState:       api.AgentStateIdle,
-			CreatedAt:        time.Now(),
-			LastModified:     time.Now(),
-			ChatMessageStore: sessions.NewInMemoryChatStore(),
-		}
 	}
 
-	if session != nil && session.ChatMessageStore == nil {
-		session.ChatMessageStore = sessions.NewInMemoryChatStore()
+	var chatStore api.ChatMessageStore
+	if session != nil {
+		chatStore = session.ChatMessageStore
 	}
-
-	chatStore := session.ChatMessageStore
 
 	var recorder journal.Recorder
 	if opt.TracePath != "" {
@@ -504,13 +497,13 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 		MCPClientEnabled:   opt.MCPClient,
 		RunOnce:            opt.Quiet,
 		InitialQuery:       queryFromCmd,
-		SessionBackend:     opt.SessionBackend,
 		ChatMessageStore:   chatStore,
 		Sandbox:            opt.Sandbox,
 		SandboxImage:       opt.SandboxImage,
+		Session:            session,
+		SessionBackend:     opt.SessionBackend,
 	}
 
-	k8sAgent.SetSession(session)
 	err = k8sAgent.Init(ctx)
 	if err != nil {
 		return fmt.Errorf("starting k8s agent: %w", err)
