@@ -54,6 +54,7 @@ func (sm *SessionManager) NewSession(meta Metadata) (*api.Session, error) {
 	now := time.Now()
 	session := &api.Session{
 		ID:           sessionID,
+		Name:         "Session " + sessionID,
 		ProviderID:   meta.ProviderID,
 		ModelID:      meta.ModelID,
 		AgentState:   api.AgentStateIdle,

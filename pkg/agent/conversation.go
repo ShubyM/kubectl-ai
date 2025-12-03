@@ -870,7 +870,7 @@ func (c *Agent) handleMetaQuery(ctx context.Context, query string) (answer strin
 			return "Invalid command. Usage: resume-session <session_id>", true, nil
 		}
 		sessionID := parts[1]
-		if err := c.loadSession(sessionID); err != nil {
+		if err := c.LoadSession(sessionID); err != nil {
 			return "", false, err
 		}
 		return fmt.Sprintf("Resumed session %s.", sessionID), true, nil
@@ -922,8 +922,76 @@ func (c *Agent) SaveSession() (string, error) {
 	return newSession.ID, nil
 }
 
-// loadSession loads a session by ID (or latest), updates the agent's state, and re-initializes the chat.
-func (c *Agent) loadSession(sessionID string) error {
+// NewSession creates a new session, optionally creating a new sandbox, and loads it.
+func (c *Agent) NewSession() (string, error) {
+	c.sessionMu.Lock()
+	// Unlock before calling SaveSession/LoadSession to avoid deadlocks if they lock internally
+	// But wait, SaveSession locks internally.
+	c.sessionMu.Unlock()
+
+	// Save the current session first
+	if _, err := c.SaveSession(); err != nil {
+		return "", fmt.Errorf("failed to save current session: %w", err)
+	}
+
+	manager, err := sessions.NewSessionManager(c.SessionBackend)
+	if err != nil {
+		return "", fmt.Errorf("failed to create session manager: %w", err)
+	}
+
+	metadata := sessions.Metadata{
+		ModelID:    c.Model,
+		ProviderID: c.Provider,
+	}
+
+	newSession, err := manager.NewSession(metadata)
+	if err != nil {
+		return "", fmt.Errorf("failed to create new session: %w", err)
+	}
+
+	// If we are using a sandbox, we should spin up a new one for the new session
+	if c.Sandbox == "k8s" {
+		sandboxName := fmt.Sprintf("kubectl-ai-sandbox-%s", uuid.New().String()[:8])
+		sandboxImage := c.SandboxImage
+		if sandboxImage == "" {
+			sandboxImage = "bitnami/kubectl:latest"
+		}
+
+		sb, err := sandbox.NewKubernetesSandbox(sandboxName,
+			sandbox.WithKubeconfig(c.Kubeconfig),
+			sandbox.WithImage(sandboxImage),
+		)
+		if err != nil {
+			return "", fmt.Errorf("failed to create new sandbox: %w", err)
+		}
+
+		// Close the old executor if it exists
+		if c.executor != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			if err := c.executor.Close(ctx); err != nil {
+				klog.Warningf("error closing old executor: %v", err)
+			}
+			cancel()
+		}
+
+		c.executor = sb
+		klog.Info("Created new sandbox for new session", "name", sandboxName)
+		
+		// We need to re-register tools with the new executor
+		c.Tools.RegisterTool(tools.NewBashTool(c.executor))
+		c.Tools.RegisterTool(tools.NewKubectlTool(c.executor))
+	}
+
+	// Load the new session
+	if err := c.LoadSession(newSession.ID); err != nil {
+		return "", fmt.Errorf("failed to load new session: %w", err)
+	}
+
+	return newSession.ID, nil
+}
+
+// LoadSession loads a session by ID (or latest), updates the agent's state, and re-initializes the chat.
+func (c *Agent) LoadSession(sessionID string) error {
 	manager, err := sessions.NewSessionManager(c.SessionBackend)
 	if err != nil {
 		return fmt.Errorf("failed to create session manager: %w", err)

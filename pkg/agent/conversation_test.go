@@ -255,3 +255,36 @@ func TestHandleMetaQuery(t *testing.T) {
 		})
 	}
 }
+
+func TestAgent_NewSession(t *testing.T) {
+	// Setup
+	manager, err := sessions.NewSessionManager("memory")
+	if err != nil {
+		t.Fatalf("creating session manager: %v", err)
+	}
+
+	// Create initial session
+	sess1, err := manager.NewSession(sessions.Metadata{})
+	if err != nil {
+		t.Fatalf("creating session 1: %v", err)
+	}
+
+	a := &Agent{
+		SessionBackend: "memory",
+	}
+	a.SetSession(sess1)
+
+	// Call NewSession
+	newID, err := a.NewSession()
+	if err != nil {
+		t.Fatalf("NewSession failed: %v", err)
+	}
+
+	if newID == sess1.ID {
+		t.Fatalf("expected new session ID to be different from old one")
+	}
+
+	if a.Session().ID != newID {
+		t.Fatalf("agent session ID mismatch: got %s, want %s", a.Session().ID, newID)
+	}
+}

@@ -20,6 +20,7 @@ import (
 
 type Session struct {
 	ID               string
+	Name             string
 	ProviderID       string
 	ModelID          string
 	Messages         []*Message
