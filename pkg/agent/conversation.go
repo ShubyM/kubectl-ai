@@ -196,9 +196,7 @@ func (s *Agent) Init(ctx context.Context) error {
 		return fmt.Errorf("RunOnce mode requires an initial query to be provided")
 	}
 
-	if s.SessionBackend == "" {
-		s.SessionBackend = "memory"
-	}
+
 
 	if s.Session != nil {
 		if s.Session.ChatMessageStore == nil {
