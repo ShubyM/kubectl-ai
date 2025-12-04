@@ -52,7 +52,7 @@ func (s *KubernetesSandbox) Execute(ctx context.Context, command string, env []s
 	fullCommand := command
 
 	if workDir != "" {
-		fullCommand = fmt.Sprintf("cd %q && %s", workDir, fullCommand)
+		fullCommand = fmt.Sprintf("mkdir -p %q && cd %q && %s", workDir, workDir, fullCommand)
 	}
 
 	for _, envVar := range env {

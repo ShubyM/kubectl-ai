@@ -449,10 +449,22 @@
                 try {
                     const res = await fetch(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
                     if (res.ok) {
-                        if (id === currentSessionId) {
-                            setCurrentSessionId(null);
+                        // Fetch updated list
+                        const sessionsRes = await fetch('/api/sessions');
+                        if (sessionsRes.ok) {
+                            const data = await sessionsRes.json();
+                            data.sort((a, b) => new Date(b.LastModified) - new Date(a.LastModified));
+                            setSessions(data);
+
+                            if (id === currentSessionId) {
+                                // If we deleted the active session, switch to the latest one
+                                if (data.length > 0) {
+                                    setCurrentSessionId(data[0].ID);
+                                } else {
+                                    setCurrentSessionId(null);
+                                }
+                            }
                         }
-                        fetchSessions();
                     } else {
                         const text = await res.text();
                         alert('Failed to delete session: ' + text);
@@ -880,8 +892,8 @@
                                     <button
                                         onClick={() => handleSwitchSession(session.ID)}
                                         className={`w-full text-left p-3 rounded-lg transition-all duration-200 pr-8 ${currentSessionId === session.ID
-                                                ? (isDarkMode ? 'bg-brand-900/40 text-brand-300 border border-brand-700/50 shadow-sm' : 'bg-white text-brand-700 border border-brand-200 shadow-sm')
-                                                : (isDarkMode ? 'text-gray-400 hover:bg-gray-800 hover:text-gray-200' : 'text-gray-600 hover:bg-white/60 hover:text-gray-900')
+                                            ? (isDarkMode ? 'bg-brand-800/50 text-white border border-brand-600/50 shadow-sm' : 'bg-brand-50 text-brand-900 border border-brand-200 shadow-sm')
+                                            : (isDarkMode ? 'text-gray-400 hover:bg-gray-800 hover:text-gray-200' : 'text-gray-600 hover:bg-white/60 hover:text-gray-900')
                                             }`}
                                     >
                                         <div className="text-sm font-medium truncate mb-1">{session.Name || session.ID}</div>

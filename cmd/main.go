@@ -184,7 +184,7 @@ func (o *Options) InitDefaults() {
 	o.NewSession = false
 	o.ListSessions = false
 	o.DeleteSession = ""
-	o.SessionBackend = "memory"
+	o.SessionBackend = ""
 
 	// By default, hide tool outputs
 	o.ShowToolOutput = false
@@ -679,7 +679,11 @@ func resolveKubeConfigPath(opt *Options) error {
 		if err != nil {
 			return fmt.Errorf("failed to get user home directory: %w", err)
 		}
-		opt.KubeConfigPath = filepath.Join(home, ".kube", "config")
+		defaultPath := filepath.Join(home, ".kube", "config")
+		// Only use the default path if it exists
+		if _, err := os.Stat(defaultPath); err == nil {
+			opt.KubeConfigPath = defaultPath
+		}
 	}
 
 	// We resolve the kubeconfig path to an absolute path, so we can run kubectl from any working directory.
