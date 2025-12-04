@@ -30,7 +30,6 @@ import (
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/agent"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/api"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/journal"
-	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/sessions"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/ui"
 	"github.com/charmbracelet/glamour"
 	"golang.org/x/sync/errgroup"
@@ -95,22 +94,28 @@ type HTMLUserInterface struct {
 	httpServer         *http.Server
 	httpServerListener net.Listener
 
-	agent            *agent.Agent
+	manager          *agent.SessionManager
 	journal          journal.Recorder
 	markdownRenderer *glamour.TermRenderer
-	broadcaster      *Broadcaster
+	broadcasters     map[string]*Broadcaster
+	broadcastersMu   sync.Mutex
 }
 
 var _ ui.UI = &HTMLUserInterface{}
 
-func NewHTMLUserInterface(agent *agent.Agent, listenAddress string, journal journal.Recorder) (*HTMLUserInterface, error) {
+func NewHTMLUserInterface(manager *agent.SessionManager, listenAddress string, journal journal.Recorder) (*HTMLUserInterface, error) {
 	mux := http.NewServeMux()
 
 	u := &HTMLUserInterface{
-		agent:       agent,
-		journal:     journal,
-		broadcaster: NewBroadcaster(),
+		manager:      manager,
+		journal:      journal,
+		broadcasters: make(map[string]*Broadcaster),
 	}
+
+	// Register callback to listen to new agents
+	manager.SetAgentCreatedCallback(func(a *agent.Agent) {
+		u.ensureAgentListener(a)
+	})
 
 	httpServer := &http.Server{
 		Addr:    listenAddress,
@@ -152,35 +157,9 @@ func NewHTMLUserInterface(agent *agent.Agent, listenAddress string, journal jour
 func (u *HTMLUserInterface) Run(ctx context.Context) error {
 	g, gctx := errgroup.WithContext(ctx)
 
-	// Start the broadcaster
-	g.Go(func() error {
-		u.broadcaster.Run(gctx)
-		return nil
-	})
+	// We no longer listen to a single agent here.
+	// Instead, we ensure listeners are started when agents are created.
 
-	// This goroutine listens to agent output and broadcasts it.
-	g.Go(func() error {
-		for {
-			select {
-			case <-gctx.Done():
-				return nil
-			case _, ok := <-u.agent.Output:
-				if !ok {
-					return nil // Channel closed
-				}
-				// We received a message from the agent. It's a signal that
-				// the state has changed. We fetch the entire current state and
-				// broadcast it to all connected clients.
-				jsonData, err := u.getCurrentStateJSON()
-				if err != nil {
-					// Don't return an error, just log it and continue
-					klog.Errorf("Error marshaling state for broadcast: %v", err)
-					continue
-				}
-				u.broadcaster.Broadcast(jsonData)
-			}
-		}
-	})
 
 	g.Go(func() error {
 		if err := u.httpServer.Serve(u.httpServerListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -231,36 +210,39 @@ func (u *HTMLUserInterface) handleSessionStream(w http.ResponseWriter, req *http
 	w.Header().Set("Connection", "keep-alive")
 
 	clientChan := make(chan []byte, 10)
-	u.broadcaster.newClient <- clientChan
+	broadcaster := u.getBroadcaster(id)
+	broadcaster.newClient <- clientChan
 	defer func() {
-		u.broadcaster.delClient <- clientChan
+		broadcaster.delClient <- clientChan
 	}()
 
 	log.Info("SSE client connected", "sessionID", id)
 
 	// Send initial state for the requested session
-	// If it's the active session, get from agent.
-	// If not, load from storage (read-only).
+	// We try to get the agent first. If it exists (active), we use it.
+	// If not, we load from store (read-only).
+	// Actually, u.manager.GetAgent loads it if not active.
+	// But we don't want to activate it just for viewing?
+	// If we just view, we can read from store.
+	// But if we want to stream updates, we assume it might become active.
+	// Let's check if it's active in manager.
+	// But manager doesn't expose "IsActive".
+	// Let's just use GetAgent. It's fine to load it. It's cheap if not running.
+	// Wait, GetAgent calls factory which creates a new agent.
+	// If we just want to view history, maybe we shouldn't create agent?
+	// But the user wants "agent per session".
+	// Let's use GetAgent for simplicity and consistency.
+	
+	agent, err := u.manager.GetAgent(ctx, id)
 	var initialData []byte
-	var err error
-
-	if u.agent.GetSession().ID == id {
-		initialData, err = u.getCurrentStateJSON()
+	if err != nil {
+		log.Error(err, "getting agent for session")
+		// If failed to get agent (e.g. session not found), we should probably error out or return empty.
+		// But maybe session exists in store but failed to init?
+		// Let's try to find in store directly if GetAgent failed?
+		// No, GetAgent checks store.
 	} else {
-		// Load from storage
-		manager, errM := sessions.NewSessionManager(u.agent.SessionBackend)
-		if errM == nil {
-			session, errS := manager.FindSessionByID(id)
-			if errS == nil {
-				// Construct state JSON manually or helper
-				// We need a helper that takes a session
-				initialData, err = u.getSessionStateJSON(session)
-			} else {
-				err = errS
-			}
-		} else {
-			err = errM
-		}
+		initialData, err = u.getSessionStateJSON(agent.Session)
 	}
 
 	if err != nil {
@@ -276,11 +258,6 @@ func (u *HTMLUserInterface) handleSessionStream(w http.ResponseWriter, req *http
 			log.Info("SSE client disconnected")
 			return
 		case msg := <-clientChan:
-			// TODO: Filter messages by session ID if possible?
-			// For now, we broadcast all messages. The client can filter.
-			// Or we can parse the msg (inefficient) or change Broadcaster to support topics.
-			// Given time constraints, we rely on client filtering for now,
-			// but we ensure the initial state is correct.
 			fmt.Fprintf(w, "data: %s\n\n", msg)
 			flusher.Flush()
 		}
@@ -291,14 +268,7 @@ func (u *HTMLUserInterface) handleListSessions(w http.ResponseWriter, req *http.
 	ctx := req.Context()
 	log := klog.FromContext(ctx)
 
-	manager, err := sessions.NewSessionManager(u.agent.SessionBackend)
-	if err != nil {
-		log.Error(err, "creating session manager")
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	sessionsList, err := manager.ListSessions()
+	sessionsList, err := u.manager.ListSessions()
 	if err != nil {
 		log.Error(err, "listing sessions")
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -315,21 +285,16 @@ func (u *HTMLUserInterface) handleCreateSession(w http.ResponseWriter, req *http
 	ctx := req.Context()
 	log := klog.FromContext(ctx)
 
-	sessionID, err := u.agent.NewSession()
+	agent, err := u.manager.CreateSession(ctx)
 	if err != nil {
 		log.Error(err, "creating new session")
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Broadcast the new state
-	jsonData, err := u.getCurrentStateJSON()
-	if err == nil {
-		u.broadcaster.Broadcast(jsonData)
-	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"id": sessionID})
+	json.NewEncoder(w).Encode(map[string]string{"id": agent.Session.ID})
 }
 
 func (u *HTMLUserInterface) handleRenameSession(w http.ResponseWriter, req *http.Request) {
@@ -352,46 +317,25 @@ func (u *HTMLUserInterface) handleRenameSession(w http.ResponseWriter, req *http
 		return
 	}
 
-	manager, err := sessions.NewSessionManager(u.agent.SessionBackend)
-	if err != nil {
-		log.Error(err, "creating session manager")
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	session, err := manager.FindSessionByID(id)
+	session, err := u.manager.FindSessionByID(id)
 	if err != nil {
 		http.Error(w, "session not found", http.StatusNotFound)
 		return
 	}
 
 	session.Name = newName
-	if err := manager.UpdateLastAccessed(session); err != nil { // UpdateLastAccessed also saves the session
+	if err := u.manager.UpdateLastAccessed(session); err != nil { // UpdateLastAccessed also saves the session
 		log.Error(err, "updating session")
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// If this is the active session, we should probably update the agent's copy too?
-	// But Agent.Session() returns a copy. The agent holds the pointer.
-	// If we updated the store, the agent might overwrite it if it saves?
-	// Ideally we update the agent's session if it matches.
-	if u.agent.GetSession().ID == id {
-		// We can't easily update the agent's private session struct from here without a method.
-		// But since we updated the store, and the agent saves to the store...
-		// Actually, if the agent saves, it might overwrite the name with the old name if it has it in memory.
-		// This is a race condition.
-		// For now, let's assume it's fine or we'll fix it later.
-		// A better way: force a reload? No.
-	}
-
-	// Broadcast update so UI refreshes list
-	// We can send a special event or just the current state (which triggers list refresh if we change logic)
-	// Actually, the UI fetches /sessions periodically or on change.
-	// We should broadcast something.
-	jsonData, err := u.getCurrentStateJSON()
-	if err == nil {
-		u.broadcaster.Broadcast(jsonData)
+	if agent, err := u.manager.GetAgent(ctx, id); err == nil {
+		agent.Session.Name = newName
+		// Broadcast update
+		if data, err := u.getSessionStateJSON(agent.Session); err == nil {
+			u.getBroadcaster(id).Broadcast(data)
+		}
 	}
 
 	w.WriteHeader(http.StatusOK)
@@ -407,29 +351,17 @@ func (u *HTMLUserInterface) handleDeleteSession(w http.ResponseWriter, req *http
 		return
 	}
 
-	if u.agent.GetSession().ID == id {
-		http.Error(w, "cannot delete active session", http.StatusConflict)
-		return
-	}
-
-	manager, err := sessions.NewSessionManager(u.agent.SessionBackend)
-	if err != nil {
-		log.Error(err, "creating session manager")
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	if err := manager.DeleteSession(id); err != nil {
+	if err := u.manager.DeleteSession(id); err != nil {
 		log.Error(err, "deleting session")
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Broadcast update
-	jsonData, err := u.getCurrentStateJSON()
-	if err == nil {
-		u.broadcaster.Broadcast(jsonData)
-	}
+	// If anyone was listening to this session, they should know it's gone.
+	// We can close the broadcaster.
+	u.broadcastersMu.Lock()
+	delete(u.broadcasters, id)
+	u.broadcastersMu.Unlock()
 
 	w.WriteHeader(http.StatusOK)
 }
@@ -456,61 +388,20 @@ func (u *HTMLUserInterface) handlePOSTSendMessage(w http.ResponseWriter, req *ht
 		return
 	}
 
-	// Check if we need to switch session
-	if u.agent.GetSession().ID != id {
-		// Try to switch
-		if u.agent.AgentState() != api.AgentStateIdle && u.agent.AgentState() != api.AgentStateDone && u.agent.AgentState() != api.AgentStateExited {
-			http.Error(w, "agent is busy with another session", http.StatusConflict)
-			return
-		}
-
-		if _, err := u.agent.SaveSession(); err != nil {
-			log.Error(err, "saving current session")
-		}
-
-		if err := u.agent.LoadSession(id); err != nil {
-			log.Error(err, "loading session")
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		// Broadcast switch
-		jsonData, err := u.getCurrentStateJSON()
-		if err == nil {
-			u.broadcaster.Broadcast(jsonData)
-		}
+	// Get the agent for this session
+	agent, err := u.manager.GetAgent(ctx, id)
+	if err != nil {
+		log.Error(err, "getting agent")
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
 	// Send the message to the agent
-	u.agent.Input <- &api.UserInputResponse{Query: q}
+	agent.Input <- &api.UserInputResponse{Query: q}
 
 	w.WriteHeader(http.StatusOK)
 }
 
-func (u *HTMLUserInterface) getCurrentStateJSON() ([]byte, error) {
-	return u.getSessionStateJSON(u.agent.GetSession())
-}
-
-func (u *HTMLUserInterface) getSessionStateJSON(session *api.Session) ([]byte, error) {
-	allMessages := session.AllMessages()
-	// Create a copy of the messages to avoid race conditions
-	var messages []*api.Message
-	for _, message := range allMessages {
-		if message.Type == api.MessageTypeUserInputRequest && message.Payload == ">>>" {
-			continue
-		}
-		messages = append(messages, message)
-	}
-
-	agentState := u.agent.GetSession().AgentState
-
-	data := map[string]interface{}{
-		"messages":   messages,
-		"agentState": agentState,
-		"sessionId":  session.ID, // Include session ID in the state
-	}
-	return json.Marshal(data)
-}
 
 func (u *HTMLUserInterface) handlePOSTChooseOption(w http.ResponseWriter, req *http.Request) {
 	ctx := req.Context()
@@ -540,14 +431,15 @@ func (u *HTMLUserInterface) handlePOSTChooseOption(w http.ResponseWriter, req *h
 		return
 	}
 
-	// Check if we need to switch session (shouldn't happen for choice usually, but good to be safe)
-	if u.agent.GetSession().ID != id {
-		http.Error(w, "session mismatch", http.StatusConflict)
+	// Get the agent
+	agent, err := u.manager.GetAgent(ctx, id)
+	if err != nil {
+		http.Error(w, "agent not found", http.StatusNotFound)
 		return
 	}
 
 	// Send the choice to the agent
-	u.agent.Input <- &api.UserChoiceResponse{Choice: choiceIndex}
+	agent.Input <- &api.UserChoiceResponse{Choice: choiceIndex}
 
 	w.WriteHeader(http.StatusOK)
 }
@@ -566,4 +458,76 @@ func (u *HTMLUserInterface) Close() error {
 
 func (u *HTMLUserInterface) ClearScreen() {
 	// Not applicable for HTML UI
+}
+
+func (u *HTMLUserInterface) getSessionStateJSON(session *api.Session) ([]byte, error) {
+	allMessages := session.AllMessages()
+	// Create a copy of the messages to avoid race conditions
+	var messages []*api.Message
+	for _, message := range allMessages {
+		if message.Type == api.MessageTypeUserInputRequest && message.Payload == ">>>" {
+			continue
+		}
+		messages = append(messages, message)
+	}
+
+	agentState := session.AgentState
+
+	data := map[string]interface{}{
+		"messages":   messages,
+		"agentState": agentState,
+		"sessionId":  session.ID,
+	}
+	return json.Marshal(data)
+}
+
+func (u *HTMLUserInterface) getBroadcaster(sessionID string) *Broadcaster {
+	u.broadcastersMu.Lock()
+	defer u.broadcastersMu.Unlock()
+
+	if b, ok := u.broadcasters[sessionID]; ok {
+		return b
+	}
+
+	b := NewBroadcaster()
+	u.broadcasters[sessionID] = b
+	
+	// Start the broadcaster loop
+	// We need a context for it. We can use a background context or the server context?
+	// Ideally we should track it and cancel it when session is closed.
+	// For now, let's use a detached context or just let it run until app exit?
+	// Broadcaster.Run blocks.
+	go b.Run(context.Background()) // TODO: Manage lifecycle better
+
+	return b
+}
+
+func (u *HTMLUserInterface) ensureAgentListener(a *agent.Agent) {
+	// Start a goroutine to listen to this agent's output
+	go func() {
+		for {
+			select {
+			case _, ok := <-a.Output:
+				if !ok {
+					return // Channel closed
+				}
+				// Broadcast state
+				// We need the session ID.
+				// a.Session might be nil if not initialized? No, manager sets it.
+				if a.Session == nil {
+					continue
+				}
+				
+				// We need to get the state JSON for THIS session.
+				data, err := u.getSessionStateJSON(a.Session)
+				if err != nil {
+					klog.Errorf("Error marshaling state for broadcast: %v", err)
+					continue
+				}
+				
+				b := u.getBroadcaster(a.Session.ID)
+				b.Broadcast(data)
+			}
+		}
+	}()
 }

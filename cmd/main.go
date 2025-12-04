@@ -181,10 +181,10 @@ func (o *Options) InitDefaults() {
 
 	// Session management options
 	o.ResumeSession = ""
-	o.NewSession = false
+	o.ResumeSession = ""
 	o.ListSessions = false
 	o.DeleteSession = ""
-	o.SessionBackend = ""
+	o.SessionBackend = "memory"
 
 	// By default, hide tool outputs
 	o.ShowToolOutput = false
@@ -334,7 +334,6 @@ func (opt *Options) bindCLIFlags(f *pflag.FlagSet) error {
 	f.StringVar(&opt.SandboxImage, "sandbox-image", opt.SandboxImage, "container image to use for the sandbox")
 
 	f.StringVar(&opt.ResumeSession, "resume-session", opt.ResumeSession, "ID of session to resume (use 'latest' for the most recent session)")
-	f.BoolVar(&opt.NewSession, "new-session", opt.NewSession, "create a new session")
 	f.BoolVar(&opt.ListSessions, "list-sessions", opt.ListSessions, "list all available sessions")
 	f.StringVar(&opt.DeleteSession, "delete-session", opt.DeleteSession, "delete a session by ID")
 	f.StringVar(&opt.SessionBackend, "session-backend", opt.SessionBackend,
@@ -402,64 +401,6 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 	}
 	defer llmClient.Close()
 
-	// Initialize session management
-	var session *api.Session
-	var sessionManager *sessions.SessionManager
-
-	if opt.NewSession || opt.ResumeSession != "" {
-		sessionManager, err = sessions.NewSessionManager(opt.SessionBackend)
-		if err != nil {
-			return fmt.Errorf("failed to create session manager: %w", err)
-		}
-
-		if opt.NewSession {
-			meta := sessions.Metadata{
-				ProviderID: opt.ProviderID,
-				ModelID:    opt.ModelID,
-			}
-			session, err = sessionManager.NewSession(meta)
-			if err != nil {
-				return fmt.Errorf("failed to create a new session: %w", err)
-			}
-			klog.Infof("Created new session: %s\n", session.ID)
-		} else {
-			if opt.ResumeSession == "" || opt.ResumeSession == "latest" {
-				session, err = sessionManager.GetLatestSession()
-				if err != nil {
-					return fmt.Errorf("failed to get latest session: %w", err)
-				}
-				if session == nil {
-					meta := sessions.Metadata{
-						ProviderID: opt.ProviderID,
-						ModelID:    opt.ModelID,
-					}
-					session, err = sessionManager.NewSession(meta)
-					if err != nil {
-						return fmt.Errorf("failed to create new session: %w", err)
-					}
-					klog.Infof("No previous session found. Created new session: %s\n", session.ID)
-				}
-			} else {
-				sessionID := opt.ResumeSession
-				session, err = sessionManager.FindSessionByID(sessionID)
-				if err != nil {
-					return fmt.Errorf("session %s not found: %w", sessionID, err)
-				}
-			}
-
-			if session != nil {
-				if err := sessionManager.UpdateLastAccessed(session); err != nil {
-					klog.Warningf("Failed to update session last accessed time: %v", err)
-				}
-			}
-		}
-	}
-
-	var chatStore api.ChatMessageStore
-	if session != nil {
-		chatStore = session.ChatMessageStore
-	}
-
 	var recorder journal.Recorder
 	if opt.TracePath != "" {
 		var fileRecorder journal.Recorder
@@ -475,56 +416,112 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 		defer recorder.Close()
 	}
 
-	k8sAgent := &agent.Agent{
-		Model:              opt.ModelID,
-		Provider:           opt.ProviderID,
-		Kubeconfig:         opt.KubeConfigPath,
-		LLM:                llmClient,
-		MaxIterations:      opt.MaxIterations,
-		PromptTemplateFile: opt.PromptTemplateFilePath,
-		ExtraPromptPaths:   opt.ExtraPromptPaths,
-		Tools:              tools.Default(),
-		Recorder:           recorder,
-		RemoveWorkDir:      opt.RemoveWorkDir,
-		SkipPermissions:    opt.SkipPermissions,
-		EnableToolUseShim:  opt.EnableToolUseShim,
-		MCPClientEnabled:   opt.MCPClient,
-		RunOnce:            opt.Quiet,
-		InitialQuery:       queryFromCmd,
-		ChatMessageStore:   chatStore,
-		Sandbox:            opt.Sandbox,
-		SandboxImage:       opt.SandboxImage,
-		Session:            session,
-		SessionBackend:     opt.SessionBackend,
+	// Initialize session management
+	var session *api.Session
+	var sessionStore *sessions.SessionManager
+
+	sessionStore, err = sessions.NewSessionManager(opt.SessionBackend)
+	if err != nil {
+		return fmt.Errorf("failed to create session manager: %w", err)
 	}
 
-	err = k8sAgent.Init(ctx)
-	if err != nil {
-		return fmt.Errorf("starting k8s agent: %w", err)
+	// Build factory for new agents
+	factory := func() *agent.Agent {
+		return &agent.Agent{
+			Model:              opt.ModelID,
+			Provider:           opt.ProviderID,
+			Kubeconfig:         opt.KubeConfigPath,
+			LLM:                llmClient,
+			MaxIterations:      opt.MaxIterations,
+			PromptTemplateFile: opt.PromptTemplateFilePath,
+			ExtraPromptPaths:   opt.ExtraPromptPaths,
+			Tools:              tools.Default(),
+			Recorder:           recorder,
+			RemoveWorkDir:      opt.RemoveWorkDir,
+			SkipPermissions:    opt.SkipPermissions,
+			EnableToolUseShim:  opt.EnableToolUseShim,
+			MCPClientEnabled:   opt.MCPClient,
+			Sandbox:            opt.Sandbox,
+			SandboxImage:       opt.SandboxImage,
+			SessionBackend:     opt.SessionBackend,
+		}
 	}
-	defer k8sAgent.Close()
+
+	sessionMgr := agent.NewSessionManager(factory, sessionStore)
+
+	// Register cleanup for all sessions
+	// We should ensure we close the session manager on exit
+	defer sessionMgr.Close()
+
+	if opt.ResumeSession != "" {
+		if opt.ResumeSession == "latest" {
+			session, err = sessionStore.GetLatestSession()
+			if err != nil {
+				return fmt.Errorf("failed to get latest session: %w", err)
+			}
+			if session == nil {
+				// No latest session found, create a new one
+				klog.Info("No previous session found to resume. Creating new session.")
+			}
+		} else {
+			session, err = sessionStore.FindSessionByID(opt.ResumeSession)
+			if err != nil {
+				return fmt.Errorf("session %s not found: %w", opt.ResumeSession, err)
+			}
+		}
+	}
+
+	var defaultAgent *agent.Agent
+
+	// If no session loaded (or resume failed/not requested), create a new one
+	if session == nil {
+		defaultAgent, err = sessionMgr.CreateSession(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to create a new session: %w", err)
+		}
+		session = defaultAgent.Session
+		klog.Infof("Created new session: %s\n", session.ID)
+	} else {
+		// Update last accessed for resumed session
+		if err := sessionStore.UpdateLastAccessed(session); err != nil {
+			klog.Warningf("Failed to update session last accessed time: %v", err)
+		}
+		klog.Infof("Resuming session: %s\n", session.ID)
+		
+		defaultAgent, err = sessionMgr.GetAgent(ctx, session.ID)
+		if err != nil {
+			return fmt.Errorf("failed to get agent for session: %w", err)
+		}
+	}
+
+	// Configure default agent for CLI usage
+	defaultAgent.RunOnce = opt.Quiet
+	defaultAgent.InitialQuery = queryFromCmd
+	// ChatMessageStore is already set by SessionManager/Agent.Init
+
+	// We don't need to call Init again, SessionManager did it.
 
 	var userInterface ui.UI
 	switch opt.UIType {
 	case ui.UITypeTerminal:
 		// since stdin is already consumed, we use TTY for taking input from user
 		useTTYForInput := hasInputData
-		userInterface, err = ui.NewTerminalUI(k8sAgent, useTTYForInput, opt.ShowToolOutput, recorder)
+		userInterface, err = ui.NewTerminalUI(defaultAgent, useTTYForInput, opt.ShowToolOutput, recorder)
 		if err != nil {
 			return fmt.Errorf("creating terminal UI: %w", err)
 		}
 	case ui.UITypeWeb:
-		userInterface, err = html.NewHTMLUserInterface(k8sAgent, opt.UIListenAddress, recorder)
+		userInterface, err = html.NewHTMLUserInterface(sessionMgr, opt.UIListenAddress, recorder)
 		if err != nil {
 			return fmt.Errorf("creating web UI: %w", err)
 		}
 	case ui.UITypeTUI:
-		userInterface = ui.NewTUI(k8sAgent)
+		userInterface = ui.NewTUI(defaultAgent)
 	default:
 		return fmt.Errorf("ui-type mode %q is not known", opt.UIType)
 	}
 
-	return repl(ctx, queryFromCmd, userInterface, k8sAgent)
+	return repl(ctx, queryFromCmd, userInterface, defaultAgent)
 }
 
 func handleCustomTools(toolConfigPaths []string) error {
