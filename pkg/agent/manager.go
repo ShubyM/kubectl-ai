@@ -44,45 +44,14 @@ func (sm *Manager) SetAgentCreatedCallback(cb func(*Agent)) {
 
 // CreateSession creates a new session and an associated agent.
 func (sm *Manager) CreateSession(ctx context.Context) (*Agent, error) {
-	// Instantiate the agent first to get the configured Model and Provider
 	agent := sm.factory()
-
-	meta := sessions.Metadata{
-		ProviderID: agent.Provider,
-		ModelID:    agent.Model,
-	}
-
+	meta := sessions.Metadata{ProviderID: agent.Provider, ModelID: agent.Model}
 	session, err := sm.store.NewSession(meta)
 	if err != nil {
 		return nil, fmt.Errorf("creating new session: %w", err)
 	}
 
-	agent.Session = session
-	// Ensure SessionBackend is set if not already (though factory should set it)
-
-	if err := agent.Init(ctx); err != nil {
-		return nil, fmt.Errorf("initializing agent: %w", err)
-	}
-
-	// Create a background context for the agent loop
-	// This context will be cancelled when the agent is closed
-	agentCtx, cancel := context.WithCancel(context.Background())
-	agent.cancel = cancel
-
-	// Start the agent loop
-	if err := agent.Run(agentCtx, ""); err != nil {
-		cancel()
-		return nil, fmt.Errorf("starting agent loop: %w", err)
-	}
-
-	sm.mu.Lock()
-	sm.agents[session.ID] = agent
-	if sm.onAgentCreated != nil {
-		sm.onAgentCreated(agent)
-	}
-	sm.mu.Unlock()
-
-	return agent, nil
+	return sm.startAgent(ctx, session, agent)
 }
 
 // GetAgent returns the agent for the given session ID, loading it if necessary.
@@ -95,39 +64,12 @@ func (sm *Manager) GetAgent(ctx context.Context, sessionID string) (*Agent, erro
 		return agent, nil
 	}
 
-	// Load session from store
 	session, err := sm.store.FindSessionByID(sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("session not found: %w", err)
 	}
 
-	// Create new agent
-	agent = sm.factory()
-	agent.Session = session
-
-	if err := agent.Init(ctx); err != nil {
-		return nil, fmt.Errorf("initializing agent: %w", err)
-	}
-
-	// Create a background context for the agent loop
-	// This context will be cancelled when the agent is closed
-	agentCtx, cancel := context.WithCancel(context.Background())
-	agent.cancel = cancel
-
-	// Start the agent loop
-	if err := agent.Run(agentCtx, ""); err != nil {
-		cancel()
-		return nil, fmt.Errorf("starting agent loop: %w", err)
-	}
-
-	sm.mu.Lock()
-	sm.agents[sessionID] = agent
-	if sm.onAgentCreated != nil {
-		sm.onAgentCreated(agent)
-	}
-	sm.mu.Unlock()
-
-	return agent, nil
+	return sm.startAgent(ctx, session, sm.factory())
 }
 
 // Close closes all active agents.
@@ -170,4 +112,29 @@ func (sm *Manager) DeleteSession(id string) error {
 // UpdateLastAccessed delegates to the underlying store.
 func (sm *Manager) UpdateLastAccessed(session *api.Session) error {
 	return sm.store.UpdateLastAccessed(session)
+}
+
+func (sm *Manager) startAgent(ctx context.Context, session *api.Session, agent *Agent) (*Agent, error) {
+	agent.Session = session
+
+	if err := agent.Init(ctx); err != nil {
+		return nil, fmt.Errorf("initializing agent: %w", err)
+	}
+
+	agentCtx, cancel := context.WithCancel(context.Background())
+	agent.cancel = cancel
+
+	if err := agent.Run(agentCtx, ""); err != nil {
+		cancel()
+		return nil, fmt.Errorf("starting agent loop: %w", err)
+	}
+
+	sm.mu.Lock()
+	sm.agents[session.ID] = agent
+	if sm.onAgentCreated != nil {
+		sm.onAgentCreated(agent)
+	}
+	sm.mu.Unlock()
+
+	return agent, nil
 }

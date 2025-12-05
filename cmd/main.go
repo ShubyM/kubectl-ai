@@ -444,6 +444,8 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 			Sandbox:            opt.Sandbox,
 			SandboxImage:       opt.SandboxImage,
 			SessionBackend:     opt.SessionBackend,
+			RunOnce:            opt.Quiet,
+			InitialQuery:       queryFromCmd,
 		}
 	}
 
@@ -494,9 +496,6 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 		}
 	}
 
-	// Configure default agent for CLI usage
-	defaultAgent.RunOnce = opt.Quiet
-	defaultAgent.InitialQuery = queryFromCmd
 	// ChatMessageStore is already set by SessionManager/Agent.Init
 
 	// We don't need to call Init again, SessionManager did it.
@@ -565,15 +564,12 @@ func handleCustomTools(toolConfigPaths []string) error {
 
 // repl is a read-eval-print loop for the chat session.
 func repl(ctx context.Context, initialQuery string, ui ui.UI, agent *agent.Agent) error {
-	query := initialQuery
+
 	// Note: Initial greeting and MCP status are now handled by the agent itself
 	// through the message-based system
-	err := agent.Run(ctx, query)
-	if err != nil {
-		return fmt.Errorf("running agent: %w", err)
-	}
+	// Agent.Run is already called by SessionManager.CreateSession or SessionManager.GetAgent (via startAgent)
 
-	err = ui.Run(ctx)
+	err := ui.Run(ctx)
 	if err != nil && !errors.Is(err, context.Canceled) {
 		return fmt.Errorf("running UI: %w", err)
 	}

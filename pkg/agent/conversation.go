@@ -387,6 +387,11 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 	// Save unexpected error and return it in for RunOnce mode
 	log.Info("Starting agent loop", "initialQuery", initialQuery, "runOnce", c.RunOnce)
 	go func() {
+		// If initialQuery is empty, try to use the one from the struct
+		if initialQuery == "" {
+			initialQuery = c.InitialQuery
+		}
+
 		if initialQuery != "" {
 			c.addMessage(api.MessageSourceUser, api.MessageTypeText, initialQuery)
 			answer, handled, err := c.handleMetaQuery(ctx, initialQuery)
