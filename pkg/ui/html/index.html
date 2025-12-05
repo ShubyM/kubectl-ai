@@ -405,7 +405,7 @@
 
             const fetchSessions = async () => {
                 try {
-                    const res = await fetch('/api/sessions');
+                    const res = await fetch('api/sessions');
                     if (res.ok) {
                         const data = await res.json();
                         data.sort((a, b) => new Date(b.LastModified) - new Date(a.LastModified));
@@ -425,7 +425,7 @@
 
             const handleNewSession = async () => {
                 try {
-                    const res = await fetch('/api/sessions', { method: 'POST' });
+                    const res = await fetch('api/sessions', { method: 'POST' });
                     if (res.ok) {
                         const data = await res.json();
                         if (data.id) {
@@ -447,10 +447,10 @@
             const handleDeleteSession = async (id) => {
                 if (!confirm('Are you sure you want to delete this session?')) return;
                 try {
-                    const res = await fetch(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+                    const res = await fetch(`api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
                     if (res.ok) {
                         // Fetch updated list
-                        const sessionsRes = await fetch('/api/sessions');
+                        const sessionsRes = await fetch('api/sessions');
                         if (sessionsRes.ok) {
                             const data = await sessionsRes.json();
                             data.sort((a, b) => new Date(b.LastModified) - new Date(a.LastModified));
@@ -485,7 +485,7 @@
             useEffect(() => {
                 if (!currentSessionId) return;
 
-                const eventSource = new EventSource(`/api/sessions/${encodeURIComponent(currentSessionId)}/stream`);
+                const eventSource = new EventSource(`api/sessions/${encodeURIComponent(currentSessionId)}/stream`);
 
                 eventSource.onopen = () => {
                     setIsConnected(true);
@@ -532,7 +532,7 @@
                 if (!message.trim() || !currentSessionId) return;
 
                 try {
-                    const response = await fetch(`/api/sessions/${encodeURIComponent(currentSessionId)}/send-message`, {
+                    const response = await fetch(`api/sessions/${encodeURIComponent(currentSessionId)}/send-message`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                         body: 'q=' + encodeURIComponent(message)
@@ -549,7 +549,7 @@
             const chooseOption = async (optionIndex) => {
                 if (!currentSessionId) return;
                 try {
-                    await fetch(`/api/sessions/${encodeURIComponent(currentSessionId)}/choose-option`, {
+                    await fetch(`api/sessions/${encodeURIComponent(currentSessionId)}/choose-option`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                         body: 'choice=' + encodeURIComponent(optionIndex)

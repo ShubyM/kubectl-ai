@@ -51,6 +51,9 @@ type KubernetesSandbox struct {
 func (s *KubernetesSandbox) Execute(ctx context.Context, command string, env []string, workDir string) (*ExecResult, error) {
 	fullCommand := command
 
+	// Ensure kubectl is in the PATH
+	fullCommand = fmt.Sprintf("export PATH=/opt/bitnami/kubectl/bin:$PATH; %s", fullCommand)
+
 	if workDir != "" {
 		fullCommand = fmt.Sprintf("mkdir -p %q && cd %q && %s", workDir, workDir, fullCommand)
 	}
@@ -334,6 +337,10 @@ func (c *Cmd) createPod() error {
 							Name:  "KUBECONFIG",
 							Value: "/etc/kube/config",
 						},
+						{
+							Name:  "PATH",
+							Value: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/bitnami/kubectl/bin",
+						},
 					},
 					VolumeMounts: []corev1.VolumeMount{
 						{
@@ -384,7 +391,7 @@ func (c *Cmd) createKubeconfigMap(name string) error {
 	sandbox := c.sandbox
 
 	// Use a static string template for the kubeconfig to ensure correctness.
-	kubeconfigYAML := `apiVersion: v1
+	kubeconfigYAML := fmt.Sprintf(`apiVersion: v1
 clusters:
 - cluster:
     server: https://kubernetes.default.svc
@@ -393,14 +400,14 @@ clusters:
 contexts:
 - context:
     cluster: default
-    namespace: default
+    namespace: %s
     user: default
   name: default
 current-context: default
 users:
 - name: default
   user:
-    tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token`
+    tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token`, sandbox.namespace)
 
 	// Create the ConfigMap object.
 	configMap := &corev1.ConfigMap{

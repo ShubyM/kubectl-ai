@@ -132,6 +132,9 @@ type Agent struct {
 
 	// lastErr is the most recent error run into, for use across the stack
 	lastErr error
+
+	// cancel is the function to cancel the agent's context
+	cancel context.CancelFunc
 }
 
 // Assert InMemoryChatStore implements ChatMessageStore
@@ -362,6 +365,10 @@ func (c *Agent) Close() error {
 		} else {
 			klog.Info("Executor cleaned up successfully")
 		}
+	}
+	// Cancel the agent's context
+	if c.cancel != nil {
+		c.cancel()
 	}
 	return nil
 }

@@ -447,7 +447,7 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 		}
 	}
 
-	sessionMgr := agent.NewSessionManager(factory, sessionStore)
+	sessionMgr := agent.NewManager(factory, sessionStore)
 
 	// Register cleanup for all sessions
 	// We should ensure we close the session manager on exit
@@ -487,7 +487,7 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 			klog.Warningf("Failed to update session last accessed time: %v", err)
 		}
 		klog.Infof("Resuming session: %s\n", session.ID)
-		
+
 		defaultAgent, err = sessionMgr.GetAgent(ctx, session.ID)
 		if err != nil {
 			return fmt.Errorf("failed to get agent for session: %w", err)

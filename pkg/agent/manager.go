@@ -13,8 +13,8 @@ import (
 // Factory is a function that creates a new Agent instance.
 type Factory func() *Agent
 
-// SessionManager manages active agent sessions.
-type SessionManager struct {
+// Manager manages the lifecycle of agents and their sessions.
+type Manager struct {
 	factory        Factory
 	store          *sessions.SessionManager
 	agents         map[string]*Agent
@@ -22,9 +22,9 @@ type SessionManager struct {
 	onAgentCreated func(*Agent)
 }
 
-// NewSessionManager creates a new SessionManager.
-func NewSessionManager(factory Factory, store *sessions.SessionManager) *SessionManager {
-	return &SessionManager{
+// NewManager creates a new Manager.
+func NewManager(factory Factory, store *sessions.SessionManager) *Manager {
+	return &Manager{
 		factory: factory,
 		store:   store,
 		agents:  make(map[string]*Agent),
@@ -33,7 +33,7 @@ func NewSessionManager(factory Factory, store *sessions.SessionManager) *Session
 
 // SetAgentCreatedCallback sets the callback to be called when a new agent is created.
 // It also calls the callback immediately for all currently active agents.
-func (sm *SessionManager) SetAgentCreatedCallback(cb func(*Agent)) {
+func (sm *Manager) SetAgentCreatedCallback(cb func(*Agent)) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	sm.onAgentCreated = cb
@@ -43,29 +43,36 @@ func (sm *SessionManager) SetAgentCreatedCallback(cb func(*Agent)) {
 }
 
 // CreateSession creates a new session and an associated agent.
-func (sm *SessionManager) CreateSession(ctx context.Context) (*Agent, error) {
-	meta := sessions.Metadata{
-		// We might want to pass these in.
-		ProviderID: "gemini",         // Default
-		ModelID:    "gemini-2.5-pro", // Default
-	}
+func (sm *Manager) CreateSession(ctx context.Context) (*Agent, error) {
+	// Instantiate the agent first to get the configured Model and Provider
+	agent := sm.factory()
 
-	// If we can, we should get these from the factory's closure variables?
-	// But we can't access them.
-	// Maybe we should update CreateSession to take Metadata?
-	// For now, let's just use what we have.
+	meta := sessions.Metadata{
+		ProviderID: agent.Provider,
+		ModelID:    agent.Model,
+	}
 
 	session, err := sm.store.NewSession(meta)
 	if err != nil {
 		return nil, fmt.Errorf("creating new session: %w", err)
 	}
 
-	agent := sm.factory()
 	agent.Session = session
 	// Ensure SessionBackend is set if not already (though factory should set it)
 
 	if err := agent.Init(ctx); err != nil {
 		return nil, fmt.Errorf("initializing agent: %w", err)
+	}
+
+	// Create a background context for the agent loop
+	// This context will be cancelled when the agent is closed
+	agentCtx, cancel := context.WithCancel(context.Background())
+	agent.cancel = cancel
+
+	// Start the agent loop
+	if err := agent.Run(agentCtx, ""); err != nil {
+		cancel()
+		return nil, fmt.Errorf("starting agent loop: %w", err)
 	}
 
 	sm.mu.Lock()
@@ -79,7 +86,7 @@ func (sm *SessionManager) CreateSession(ctx context.Context) (*Agent, error) {
 }
 
 // GetAgent returns the agent for the given session ID, loading it if necessary.
-func (sm *SessionManager) GetAgent(ctx context.Context, sessionID string) (*Agent, error) {
+func (sm *Manager) GetAgent(ctx context.Context, sessionID string) (*Agent, error) {
 	sm.mu.RLock()
 	agent, ok := sm.agents[sessionID]
 	sm.mu.RUnlock()
@@ -102,6 +109,17 @@ func (sm *SessionManager) GetAgent(ctx context.Context, sessionID string) (*Agen
 		return nil, fmt.Errorf("initializing agent: %w", err)
 	}
 
+	// Create a background context for the agent loop
+	// This context will be cancelled when the agent is closed
+	agentCtx, cancel := context.WithCancel(context.Background())
+	agent.cancel = cancel
+
+	// Start the agent loop
+	if err := agent.Run(agentCtx, ""); err != nil {
+		cancel()
+		return nil, fmt.Errorf("starting agent loop: %w", err)
+	}
+
 	sm.mu.Lock()
 	sm.agents[sessionID] = agent
 	if sm.onAgentCreated != nil {
@@ -113,7 +131,7 @@ func (sm *SessionManager) GetAgent(ctx context.Context, sessionID string) (*Agen
 }
 
 // Close closes all active agents.
-func (sm *SessionManager) Close() error {
+func (sm *Manager) Close() error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
@@ -129,17 +147,17 @@ func (sm *SessionManager) Close() error {
 }
 
 // ListSessions delegates to the underlying store.
-func (sm *SessionManager) ListSessions() ([]*api.Session, error) {
+func (sm *Manager) ListSessions() ([]*api.Session, error) {
 	return sm.store.ListSessions()
 }
 
 // FindSessionByID delegates to the underlying store.
-func (sm *SessionManager) FindSessionByID(id string) (*api.Session, error) {
+func (sm *Manager) FindSessionByID(id string) (*api.Session, error) {
 	return sm.store.FindSessionByID(id)
 }
 
 // DeleteSession delegates to the underlying store and closes the active agent if any.
-func (sm *SessionManager) DeleteSession(id string) error {
+func (sm *Manager) DeleteSession(id string) error {
 	sm.mu.Lock()
 	if agent, ok := sm.agents[id]; ok {
 		agent.Close()
@@ -150,6 +168,6 @@ func (sm *SessionManager) DeleteSession(id string) error {
 }
 
 // UpdateLastAccessed delegates to the underlying store.
-func (sm *SessionManager) UpdateLastAccessed(session *api.Session) error {
+func (sm *Manager) UpdateLastAccessed(session *api.Session) error {
 	return sm.store.UpdateLastAccessed(session)
 }

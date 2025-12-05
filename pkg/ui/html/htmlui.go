@@ -94,7 +94,7 @@ type HTMLUserInterface struct {
 	httpServer         *http.Server
 	httpServerListener net.Listener
 
-	manager          *agent.SessionManager
+	manager          *agent.Manager
 	journal          journal.Recorder
 	markdownRenderer *glamour.TermRenderer
 	broadcasters     map[string]*Broadcaster
@@ -103,7 +103,7 @@ type HTMLUserInterface struct {
 
 var _ ui.UI = &HTMLUserInterface{}
 
-func NewHTMLUserInterface(manager *agent.SessionManager, listenAddress string, journal journal.Recorder) (*HTMLUserInterface, error) {
+func NewHTMLUserInterface(manager *agent.Manager, listenAddress string, journal journal.Recorder) (*HTMLUserInterface, error) {
 	mux := http.NewServeMux()
 
 	u := &HTMLUserInterface{
@@ -218,29 +218,11 @@ func (u *HTMLUserInterface) handleSessionStream(w http.ResponseWriter, req *http
 
 	log.Info("SSE client connected", "sessionID", id)
 
-	// Send initial state for the requested session
-	// We try to get the agent first. If it exists (active), we use it.
-	// If not, we load from store (read-only).
-	// Actually, u.manager.GetAgent loads it if not active.
-	// But we don't want to activate it just for viewing?
-	// If we just view, we can read from store.
-	// But if we want to stream updates, we assume it might become active.
-	// Let's check if it's active in manager.
-	// But manager doesn't expose "IsActive".
-	// Let's just use GetAgent. It's fine to load it. It's cheap if not running.
-	// Wait, GetAgent calls factory which creates a new agent.
-	// If we just want to view history, maybe we shouldn't create agent?
-	// But the user wants "agent per session".
-	// Let's use GetAgent for simplicity and consistency.
 	
 	agent, err := u.manager.GetAgent(ctx, id)
 	var initialData []byte
 	if err != nil {
 		log.Error(err, "getting agent for session")
-		// If failed to get agent (e.g. session not found), we should probably error out or return empty.
-		// But maybe session exists in store but failed to init?
-		// Let's try to find in store directly if GetAgent failed?
-		// No, GetAgent checks store.
 	} else {
 		initialData, err = u.getSessionStateJSON(agent.Session)
 	}
@@ -505,29 +487,20 @@ func (u *HTMLUserInterface) getBroadcaster(sessionID string) *Broadcaster {
 func (u *HTMLUserInterface) ensureAgentListener(a *agent.Agent) {
 	// Start a goroutine to listen to this agent's output
 	go func() {
-		for {
-			select {
-			case _, ok := <-a.Output:
-				if !ok {
-					return // Channel closed
-				}
-				// Broadcast state
-				// We need the session ID.
-				// a.Session might be nil if not initialized? No, manager sets it.
-				if a.Session == nil {
-					continue
-				}
-				
-				// We need to get the state JSON for THIS session.
-				data, err := u.getSessionStateJSON(a.Session)
-				if err != nil {
-					klog.Errorf("Error marshaling state for broadcast: %v", err)
-					continue
-				}
-				
-				b := u.getBroadcaster(a.Session.ID)
-				b.Broadcast(data)
+		for range a.Output {
+			// Broadcast state
+			if a.Session == nil {
+				continue
 			}
+
+			data, err := u.getSessionStateJSON(a.Session)
+			if err != nil {
+				klog.Errorf("Error marshaling state for broadcast: %v", err)
+				continue
+			}
+
+			b := u.getBroadcaster(a.Session.ID)
+			b.Broadcast(data)
 		}
 	}()
 }
