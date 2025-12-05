@@ -99,6 +99,9 @@ type HTMLUserInterface struct {
 	markdownRenderer *glamour.TermRenderer
 	broadcasters     map[string]*Broadcaster
 	broadcastersMu   sync.Mutex
+
+	broadcasterCancels map[string]context.CancelFunc
+	baseCtx            context.Context
 }
 
 var _ ui.UI = &HTMLUserInterface{}
@@ -107,9 +110,10 @@ func NewHTMLUserInterface(manager *agent.Manager, listenAddress string, journal 
 	mux := http.NewServeMux()
 
 	u := &HTMLUserInterface{
-		manager:      manager,
-		journal:      journal,
-		broadcasters: make(map[string]*Broadcaster),
+		manager:            manager,
+		journal:            journal,
+		broadcasters:       make(map[string]*Broadcaster),
+		broadcasterCancels: make(map[string]context.CancelFunc),
 	}
 
 	// Register callback to listen to new agents
@@ -157,9 +161,7 @@ func NewHTMLUserInterface(manager *agent.Manager, listenAddress string, journal 
 func (u *HTMLUserInterface) Run(ctx context.Context) error {
 	g, gctx := errgroup.WithContext(ctx)
 
-	// We no longer listen to a single agent here.
-	// Instead, we ensure listeners are started when agents are created.
-
+	u.baseCtx = gctx
 
 	g.Go(func() error {
 		if err := u.httpServer.Serve(u.httpServerListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -218,7 +220,6 @@ func (u *HTMLUserInterface) handleSessionStream(w http.ResponseWriter, req *http
 
 	log.Info("SSE client connected", "sessionID", id)
 
-	
 	agent, err := u.manager.GetAgent(ctx, id)
 	var initialData []byte
 	if err != nil {
@@ -273,7 +274,6 @@ func (u *HTMLUserInterface) handleCreateSession(w http.ResponseWriter, req *http
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"id": agent.Session.ID})
@@ -342,6 +342,10 @@ func (u *HTMLUserInterface) handleDeleteSession(w http.ResponseWriter, req *http
 	// If anyone was listening to this session, they should know it's gone.
 	// We can close the broadcaster.
 	u.broadcastersMu.Lock()
+	if cancel, ok := u.broadcasterCancels[id]; ok {
+		cancel()
+		delete(u.broadcasterCancels, id)
+	}
 	delete(u.broadcasters, id)
 	u.broadcastersMu.Unlock()
 
@@ -383,7 +387,6 @@ func (u *HTMLUserInterface) handlePOSTSendMessage(w http.ResponseWriter, req *ht
 
 	w.WriteHeader(http.StatusOK)
 }
-
 
 func (u *HTMLUserInterface) handlePOSTChooseOption(w http.ResponseWriter, req *http.Request) {
 	ctx := req.Context()
@@ -435,6 +438,15 @@ func (u *HTMLUserInterface) Close() error {
 			u.httpServerListener = nil
 		}
 	}
+
+	u.broadcastersMu.Lock()
+	for id, cancel := range u.broadcasterCancels {
+		cancel()
+		delete(u.broadcasterCancels, id)
+	}
+	u.broadcasters = make(map[string]*Broadcaster)
+	u.broadcastersMu.Unlock()
+
 	return errors.Join(errs...)
 }
 
@@ -473,13 +485,16 @@ func (u *HTMLUserInterface) getBroadcaster(sessionID string) *Broadcaster {
 
 	b := NewBroadcaster()
 	u.broadcasters[sessionID] = b
-	
+
+	parent := u.baseCtx
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithCancel(parent)
+	u.broadcasterCancels[sessionID] = cancel
+
 	// Start the broadcaster loop
-	// We need a context for it. We can use a background context or the server context?
-	// Ideally we should track it and cancel it when session is closed.
-	// For now, let's use a detached context or just let it run until app exit?
-	// Broadcaster.Run blocks.
-	go b.Run(context.Background()) // TODO: Manage lifecycle better
+	go b.Run(ctx)
 
 	return b
 }

@@ -863,11 +863,7 @@ func (c *Agent) handleMetaQuery(ctx context.Context, query string) (answer strin
 	return "", false, nil
 }
 
-// NewSession creates a new session, optionally creating a new sandbox, and loads it.
-// NewSession creates a new session, optionally creating a new sandbox, and loads it.
 func (c *Agent) NewSession() (string, error) {
-	// Save the current session first
-	// SaveSession locks internally, so we don't need to hold the lock here.
 	if _, err := c.SaveSession(); err != nil {
 		return "", fmt.Errorf("failed to save current session: %w", err)
 	}
@@ -891,20 +887,16 @@ func (c *Agent) NewSession() (string, error) {
 	if c.Sandbox == "k8s" {
 		sandboxName := fmt.Sprintf("kubectl-ai-sandbox-%s", uuid.New().String()[:8])
 		sandboxImage := c.SandboxImage
-		if sandboxImage == "" {
-			sandboxImage = "bitnami/kubectl:latest"
-		}
 
 		sb, err := sandbox.NewKubernetesSandbox(sandboxName,
 			sandbox.WithKubeconfig(c.Kubeconfig),
 			sandbox.WithImage(sandboxImage),
 		)
+
 		if err != nil {
 			return "", fmt.Errorf("failed to create new sandbox: %w", err)
 		}
 
-		// Close the old executor if it exists
-		// We need to lock while swapping the executor
 		c.sessionMu.Lock()
 		if c.executor != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -917,14 +909,11 @@ func (c *Agent) NewSession() (string, error) {
 		c.executor = sb
 		klog.Info("Created new sandbox for new session", "name", sandboxName)
 
-		// We need to re-register tools with the new executor
 		c.Tools.RegisterTool(tools.NewBashTool(c.executor))
 		c.Tools.RegisterTool(tools.NewKubectlTool(c.executor))
 		c.sessionMu.Unlock()
 	}
 
-	// Load the new session
-	// LoadSession locks internally
 	if err := c.LoadSession(newSession.ID); err != nil {
 		return "", fmt.Errorf("failed to load new session: %w", err)
 	}
@@ -940,6 +929,7 @@ func (c *Agent) SaveSession() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to create session manager: %w", err)
 	}
+
 	if c.Session != nil {
 		foundSession, _ := manager.FindSessionByID(c.Session.ID)
 		if foundSession != nil {
@@ -989,7 +979,6 @@ func (c *Agent) LoadSession(sessionID string) error {
 			return fmt.Errorf("failed to get latest session: %w", err)
 		}
 		if s == nil {
-			// This can happen if GetLatestSession returns nil, nil (no sessions exist)
 			return fmt.Errorf("no sessions found to resume")
 		}
 		session = s

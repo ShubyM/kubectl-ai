@@ -181,7 +181,6 @@ func (o *Options) InitDefaults() {
 
 	// Session management options
 	o.ResumeSession = ""
-	o.ResumeSession = ""
 	o.ListSessions = false
 	o.DeleteSession = ""
 	o.SessionBackend = "memory"
