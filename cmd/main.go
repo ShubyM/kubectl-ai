@@ -342,7 +342,7 @@ func (opt *Options) bindCLIFlags(f *pflag.FlagSet) error {
 }
 
 func RunRootCommand(ctx context.Context, opt Options, args []string) error {
-	var err error // Declare err once for the whole function
+	var err error
 
 	// Validate flag combinations
 	if opt.ExternalTools && !opt.MCPServer {
@@ -388,8 +388,6 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 	}
 
 	klog.Info("Application started", "pid", os.Getpid())
-
-
 
 	var recorder journal.Recorder
 	if opt.TracePath != "" {
@@ -453,7 +451,6 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 	sessionMgr := agent.NewManager(factory, sessionStore)
 
 	// Register cleanup for all sessions
-	// We should ensure we close the session manager on exit
 	defer sessionMgr.Close()
 
 	if opt.ResumeSession != "" {
@@ -497,10 +494,6 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 		}
 	}
 
-	// ChatMessageStore is already set by SessionManager/Agent.Init
-
-	// We don't need to call Init again, SessionManager did it.
-
 	var userInterface ui.UI
 	switch opt.UIType {
 	case ui.UITypeTerminal:
@@ -521,7 +514,12 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 		return fmt.Errorf("ui-type mode %q is not known", opt.UIType)
 	}
 
-	return repl(ctx, queryFromCmd, userInterface, defaultAgent)
+	err = userInterface.Run(ctx)
+	if err != nil && !errors.Is(err, context.Canceled) {
+		return fmt.Errorf("running UI: %w", err)
+	}
+
+	return nil
 }
 
 func handleCustomTools(toolConfigPaths []string) error {
@@ -563,21 +561,6 @@ func handleCustomTools(toolConfigPaths []string) error {
 	return nil
 }
 
-// repl is a read-eval-print loop for the chat session.
-func repl(ctx context.Context, initialQuery string, ui ui.UI, agent *agent.Agent) error {
-
-	// Note: Initial greeting and MCP status are now handled by the agent itself
-	// through the message-based system
-	// Agent.Run is already called by SessionManager.CreateSession or SessionManager.GetAgent (via startAgent)
-
-	err := ui.Run(ctx)
-	if err != nil && !errors.Is(err, context.Canceled) {
-		return fmt.Errorf("running UI: %w", err)
-	}
-
-	return nil
-}
-
 // Redirect standard log output to our custom klog writer
 // This is primarily to suppress warning messages from
 // genai library https://github.com/googleapis/go-genai/blob/6ac4afc0168762dc3b7a4d940fc463cc1854f366/types.go#L1633
@@ -592,7 +575,6 @@ func redirectStdLogToKlog() {
 // Define a custom writer that forwards messages to klog.Warning
 type klogWriter struct{}
 
-// Implement the io.Writer interface
 func (writer klogWriter) Write(data []byte) (n int, err error) {
 	// We trim the trailing newline because klog adds its own.
 	message := string(bytes.TrimSuffix(data, []byte("\n")))
@@ -744,7 +726,6 @@ func handleDeleteSession(opt Options) error {
 		return fmt.Errorf("failed to create session manager: %w", err)
 	}
 
-	// Check if session exists
 	session, err := manager.FindSessionByID(opt.DeleteSession)
 	if err != nil {
 		return fmt.Errorf("session %s not found: %w", opt.DeleteSession, err)
