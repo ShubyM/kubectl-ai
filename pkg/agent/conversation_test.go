@@ -352,22 +352,10 @@ func TestAgent_Init_CreatesSessionInStore(t *testing.T) {
 		Session: session,
 	}
 
-	// Init
 	if err := a.Init(context.Background()); err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
 
-	// Manually save session to store for verification (since Init no longer does it)
-	// We need to use NewSession to create it in the store, but we want to use our specific session object.
-	// Since SessionManager doesn't expose CreateSession, we'll just use NewSession and ignore the returned object for now,
-	// OR we can just rely on the fact that we passed a session to the agent.
-	// Wait, the test is "TestAgent_Init_CreatesSessionInStore".
-	// But Init NO LONGER creates the session in the store. The CALLER (main.go) does.
-	// So this test is actually testing something that is no longer true of Agent.Init.
-	// We should probably rename the test or change what it tests.
-	// It should test that Agent.Init uses the provided session.
-	
-	// Let's change the test to verify that Agent uses the provided session.
 	if a.Session != session {
 		t.Errorf("expected agent to use provided session")
 	}

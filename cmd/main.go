@@ -389,16 +389,7 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 
 	klog.Info("Application started", "pid", os.Getpid())
 
-	var llmClient gollm.Client
-	if opt.SkipVerifySSL {
-		llmClient, err = gollm.NewClient(ctx, opt.ProviderID, gollm.WithSkipVerifySSL())
-	} else {
-		llmClient, err = gollm.NewClient(ctx, opt.ProviderID)
-	}
-	if err != nil {
-		return fmt.Errorf("creating llm client: %w", err)
-	}
-	defer llmClient.Close()
+
 
 	var recorder journal.Recorder
 	if opt.TracePath != "" {
@@ -425,12 +416,23 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 	}
 
 	// Build factory for new agents
-	factory := func() *agent.Agent {
+	factory := func(ctx context.Context) (*agent.Agent, error) {
+		var client gollm.Client
+		var err error
+		if opt.SkipVerifySSL {
+			client, err = gollm.NewClient(ctx, opt.ProviderID, gollm.WithSkipVerifySSL())
+		} else {
+			client, err = gollm.NewClient(ctx, opt.ProviderID)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("creating llm client: %w", err)
+		}
+
 		return &agent.Agent{
 			Model:              opt.ModelID,
 			Provider:           opt.ProviderID,
 			Kubeconfig:         opt.KubeConfigPath,
-			LLM:                llmClient,
+			LLM:                client,
 			MaxIterations:      opt.MaxIterations,
 			PromptTemplateFile: opt.PromptTemplateFilePath,
 			ExtraPromptPaths:   opt.ExtraPromptPaths,
@@ -445,7 +447,7 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 			SessionBackend:     opt.SessionBackend,
 			RunOnce:            opt.Quiet,
 			InitialQuery:       queryFromCmd,
-		}
+		}, nil
 	}
 
 	sessionMgr := agent.NewManager(factory, sessionStore)

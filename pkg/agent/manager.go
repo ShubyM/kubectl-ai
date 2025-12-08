@@ -11,7 +11,7 @@ import (
 )
 
 // Factory is a function that creates a new Agent instance.
-type Factory func() *Agent
+type Factory func(context.Context) (*Agent, error)
 
 // Manager manages the lifecycle of agents and their sessions.
 type Manager struct {
@@ -44,7 +44,10 @@ func (sm *Manager) SetAgentCreatedCallback(cb func(*Agent)) {
 
 // CreateSession creates a new session and an associated agent.
 func (sm *Manager) CreateSession(ctx context.Context) (*Agent, error) {
-	agent := sm.factory()
+	agent, err := sm.factory(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("creating agent: %w", err)
+	}
 	meta := sessions.Metadata{ProviderID: agent.Provider, ModelID: agent.Model}
 	session, err := sm.store.NewSession(meta)
 	if err != nil {
@@ -69,7 +72,12 @@ func (sm *Manager) GetAgent(ctx context.Context, sessionID string) (*Agent, erro
 		return nil, fmt.Errorf("session not found: %w", err)
 	}
 
-	return sm.startAgent(ctx, session, sm.factory())
+	newAgent, err := sm.factory(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("creating agent: %w", err)
+	}
+
+	return sm.startAgent(ctx, session, newAgent)
 }
 
 // Close closes all active agents.

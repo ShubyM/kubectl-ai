@@ -370,6 +370,12 @@ func (c *Agent) Close() error {
 	if c.cancel != nil {
 		c.cancel()
 	}
+	// Close the LLM client
+	if c.LLM != nil {
+		if err := c.LLM.Close(); err != nil {
+			klog.Warningf("error closing LLM client: %v", err)
+		}
+	}
 	return nil
 }
 
