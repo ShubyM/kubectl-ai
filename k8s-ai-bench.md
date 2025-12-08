@@ -1,4 +1,4 @@
-# K8s-bench Evaluation Results
+# K8s-ai-bench Evaluation Results
 
 ## Model Performance Summary
 

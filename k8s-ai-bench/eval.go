@@ -28,7 +28,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/GoogleCloudPlatform/kubectl-ai/k8s-bench/pkg/model"
+	"github.com/GoogleCloudPlatform/kubectl-ai/k8s-ai-bench/pkg/model"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/yaml"
 )
@@ -36,7 +36,7 @@ import (
 func runEvaluation(ctx context.Context, config EvalConfig) error {
 	logger := klog.FromContext(ctx)
 	if config.ClusterCreationPolicy != DoNotCreate {
-		clusterName := "k8s-bench-eval"
+		clusterName := "k8s-ai-bench-eval"
 		clusterExists, err := kindClusterExists(clusterName)
 		if err != nil {
 			return fmt.Errorf("failed to check if kind cluster exists: %w", err)
@@ -130,7 +130,7 @@ func runEvaluation(ctx context.Context, config EvalConfig) error {
 				for _, llmConfig := range config.LLMConfigs {
 					taskOutputDir := ""
 					if config.OutputDir != "" {
-						taskOutputDir = filepath.Join(config.OutputDir, job.taskID, llmConfig.ID)
+						taskOutputDir = filepath.Join(config.OutputDir, job.taskID)
 						if err := os.MkdirAll(taskOutputDir, 0755); err != nil {
 							errorsCh <- fmt.Errorf("creating directory %q: %w", taskOutputDir, err)
 							return
@@ -149,7 +149,17 @@ func runEvaluation(ctx context.Context, config EvalConfig) error {
 						log = logFile
 					}
 
+					start := time.Now()
+					fmt.Printf("\033[36mWorker %d: Started %s for %s\033[0m\n", workerID, llmConfig.ID, job.taskID)
+
 					result := evaluateTask(ctx, config, job.taskID, job.task, llmConfig, log)
+
+					fmt.Printf("\033[32mWorker %d: Completed %s for %s in %s\033[0m\n",
+						workerID,
+						llmConfig.ID,
+						job.taskID,
+						time.Since(start).Round(time.Second),
+					)
 
 					if taskOutputDir != "" {
 						if err := writeToYAMLFile(filepath.Join(taskOutputDir, "results.yaml"), result); err != nil {
@@ -278,7 +288,7 @@ func evaluateTask(ctx context.Context, config EvalConfig, taskID string, task Ta
 	taskCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	taskOutputDir := filepath.Join(config.OutputDir, taskID, llmConfig.ID)
+	taskOutputDir := filepath.Join(config.OutputDir, taskID)
 
 	var logBuffer bytes.Buffer
 	multiWriter := io.MultiWriter(&logBuffer)
@@ -333,15 +343,7 @@ func evaluateTask(ctx context.Context, config EvalConfig, taskID string, task Ta
 		logString := logBuffer.String()
 		logTail, truncated := getLastNLines(logString, maxErrLogLines)
 		// build log file path
-		shimSegment := "shim_disabled"
-		if x.llmConfig.EnableToolUseShim {
-			shimSegment = "shim_enabled"
-		}
-		logPath := filepath.Join(
-			config.OutputDir,
-			taskID,
-			shimSegment+"-"+x.llmConfig.ProviderID+"-"+x.llmConfig.ModelID,
-		)
+		logPath := taskOutputDir
 		errorMessage := fmt.Sprintf("agent encountered error: %v\n---LOG---\n%s", err, logTail)
 		if truncated {
 			errorMessage += fmt.Sprintf("\n... (log truncated, full log at %s)", logPath)
@@ -406,15 +408,7 @@ func evaluateTask(ctx context.Context, config EvalConfig, taskID string, task Ta
 			logString := logBuffer.String()
 			logTail, truncated := getLastNLines(logString, maxLogLines)
 			// build log file path
-			shimSegment := "shim_disabled"
-			if x.llmConfig.EnableToolUseShim {
-				shimSegment = "shim_enabled"
-			}
-			logPath := filepath.Join(
-				config.OutputDir,
-				taskID,
-				shimSegment+"-"+x.llmConfig.ProviderID+"-"+x.llmConfig.ModelID,
-			)
+			logPath := taskOutputDir
 			failureMessage := fmt.Sprintf("verifier script failed: %v\n---LOG---\n%s", err, logTail)
 			if truncated {
 				failureMessage += fmt.Sprintf("\n... (log truncated, full log at %s)", logPath)
@@ -464,7 +458,7 @@ func (x *TaskExecution) runSetup(ctx context.Context) error {
 		kubeconfigPath := filepath.Join(x.taskDir, "kubeconfig.yaml")
 		x.kubeConfig = kubeconfigPath
 
-		clusterName := fmt.Sprintf("k8s-bench-%s", x.taskID)
+		clusterName := fmt.Sprintf("k8s-ai-bench-%s", x.taskID)
 		log.Info("creating kind cluster", "name", clusterName)
 
 		args := []string{
@@ -545,6 +539,9 @@ func (x *TaskExecution) runAgent(ctx context.Context) (string, error) {
 		"--trace-path", tracePath,
 		"--skip-permissions",
 		"--show-tool-output",
+	}
+	if x.llmConfig.McpClient {
+		args = append(args, "--mcp-client")
 	}
 
 	stdinReader, stdinWriter := io.Pipe()

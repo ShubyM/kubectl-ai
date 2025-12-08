@@ -97,12 +97,12 @@ func TestHandleMetaQuery(t *testing.T) {
 				}
 
 				a := &Agent{llmChat: chat}
-				a.session = &api.Session{ChatMessageStore: store}
+				a.Session = &api.Session{ChatMessageStore: store}
 
 				return a
 			},
 			verify: func(t *testing.T, a *Agent, _ string) {
-				if got := len(a.session.ChatMessageStore.ChatMessages()); got != 0 {
+				if got := len(a.Session.ChatMessageStore.ChatMessages()); got != 0 {
 					t.Fatalf("expected store to be empty after clear, got %d", got)
 				}
 			},
@@ -113,7 +113,7 @@ func TestHandleMetaQuery(t *testing.T) {
 			expect: "It has been a pleasure assisting you. Have a great day!",
 			expectations: func(t *testing.T) *Agent {
 				a := &Agent{}
-				a.session = &api.Session{}
+				a.Session = &api.Session{}
 				return a
 			},
 			verify: func(t *testing.T, a *Agent, _ string) {
@@ -128,7 +128,7 @@ func TestHandleMetaQuery(t *testing.T) {
 			expect: "Current model is `test-model`",
 			expectations: func(t *testing.T) *Agent {
 				a := &Agent{Model: "test-model"}
-				a.session = &api.Session{}
+				a.Session = &api.Session{}
 				return a
 			},
 		},
@@ -143,7 +143,7 @@ func TestHandleMetaQuery(t *testing.T) {
 				llm.EXPECT().ListModels(ctx).Return([]string{"a", "b"}, nil)
 
 				a := &Agent{LLM: llm}
-				a.session = &api.Session{}
+				a.Session = &api.Session{}
 				return a
 			},
 		},
@@ -166,7 +166,7 @@ func TestHandleMetaQuery(t *testing.T) {
 
 				a.Tools.Init()
 				a.Tools.RegisterTool(mt)
-				a.session = &api.Session{}
+				a.Session = &api.Session{}
 				return a
 			},
 			verify: func(t *testing.T, _ *Agent, answer string) {
@@ -185,7 +185,7 @@ func TestHandleMetaQuery(t *testing.T) {
 				home := t.TempDir()
 				os.Setenv("HOME", home)
 
-				manager, err := sessions.NewSessionManager()
+				manager, err := sessions.NewSessionManager("memory")
 				if err != nil {
 					t.Fatalf("creating session manager: %v", err)
 				}
@@ -193,8 +193,8 @@ func TestHandleMetaQuery(t *testing.T) {
 				if err != nil {
 					t.Fatalf("creating session: %v", err)
 				}
-				a := &Agent{ChatMessageStore: sess}
-				a.session = &api.Session{ChatMessageStore: sess}
+				a := &Agent{ChatMessageStore: sess.ChatMessageStore}
+				a.Session = sess
 				return a
 			},
 			verify: func(t *testing.T, _ *Agent, answer string) {
@@ -213,7 +213,7 @@ func TestHandleMetaQuery(t *testing.T) {
 				home := t.TempDir()
 				os.Setenv("HOME", home)
 
-				manager, err := sessions.NewSessionManager()
+				manager, err := sessions.NewSessionManager("memory")
 				if err != nil {
 					t.Fatalf("creating session manager: %v", err)
 				}
@@ -224,8 +224,8 @@ func TestHandleMetaQuery(t *testing.T) {
 					t.Fatalf("creating session: %v", err)
 				}
 
-				a := &Agent{}
-				a.session = &api.Session{ChatMessageStore: sessions.NewInMemoryChatStore()}
+				a := &Agent{SessionBackend: "memory"}
+				a.Session = &api.Session{ChatMessageStore: sessions.NewInMemoryChatStore()}
 				return a
 			},
 			verify: func(t *testing.T, _ *Agent, answer string) {

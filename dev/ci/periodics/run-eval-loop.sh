@@ -4,8 +4,8 @@ set -eou pipefail
 
 # Example usage: ./run-eval-loop.sh --iterations 5 --provider gemini --model gemini-2.5-pro --api-base http://localhost:8000/v1 --concurrency 5 --task-pattern "create" -k AlwaysCreate
 
-# Number of times to run the loop (default: 3)
-ITERATIONS=3
+# Number of times to run the loop (default: 1)
+ITERATIONS=1
 # The LLM provider to use (default: gemini)
 PROVIDER="gemini"
 # The specific model to test (default: "gemini-2.5-pro")
@@ -13,7 +13,7 @@ MODEL="gemini-2.5-pro"
 # The API base URL (default: "http://localhost:8000/v1")
 API_BASE="http://localhost:8000/v1"
 # The number of eval tasks to run in parallel (default: 5)
-CONCURRENCY=1
+CONCURRENCY=5
 # The regex pattern for tasks to run
 TASK_PATTERN=""
 # kind cluster creation policy (default: "CreateIfNotExists")
@@ -61,26 +61,25 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Check for required commands
-for cmd in git go make; do
+for cmd in git go; do
   if ! command -v $cmd &> /dev/null; then
     echo "Error: Required command '$cmd' is not installed. Aborting." >&2
     exit 1
   fi
 done
 
-# Build kubectl-ai and k8s-bench binaries
+# Install kubectl-ai and build k8s-ai-bench
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd ${REPO_ROOT}
 
 BINDIR="${REPO_ROOT}/.build/bin"
 mkdir -p "${BINDIR}"
 
-cd "${REPO_ROOT}/cmd"
-go build -o "${BINDIR}/kubectl-ai" .
+curl -sSL https://raw.githubusercontent.com/GoogleCloudPlatform/kubectl-ai/main/install.sh | bash
 
-cd "${REPO_ROOT}/k8s-bench"
-go build -o "${BINDIR}/k8s-bench" .
-K8S_BENCH_BIN="${BINDIR}/k8s-bench"
+cd "${REPO_ROOT}/k8s-ai-bench"
+go build -o "${BINDIR}/k8s-ai-bench" .
+K8S_AI_BENCH_BIN="${BINDIR}/k8s-ai-bench"
 
 # Go back to REPO_ROOT to start running evals
 cd "${REPO_ROOT}"
@@ -97,55 +96,56 @@ echo "Task Pattern: ${TASK_PATTERN:-"All Tasks"}"
 # Loop from 1 to the specified number of iterations
 for i in $(seq 1 $ITERATIONS)
 do
-  # Create the unique directory name for this run
-  OUTPUT_DIR="${REPO_ROOT}/.build/k8s-bench-${MODEL}-${i}"
+  # Create a sanitized version of model name: replace all '/' with '-'
+  SAFE_MODEL="${MODEL//\//-}"
+  OUTPUT_DIR="${REPO_ROOT}/.build/k8s-ai-bench-${SAFE_MODEL}-${i}"
   
-  echo "**********"
-  echo "loop_evals: Running iteration $i of $ITERATIONS..."
-  echo "writing results to $OUTPUT_DIR"
-  echo "**********"
+  echo "Running iteration $i of $ITERATIONS..."
 
-  # Construct the arguments for the make command
-  TEST_ARGS="--enable-tool-use-shim=false --llm-provider=${PROVIDER} --models=${MODEL} --quiet --output-dir=${OUTPUT_DIR} --cluster-creation-policy=${CLUSTER_CREATION_POLICY} --concurrency ${CONCURRENCY} "
+  K8S_AI_BENCH_ARGS="--agent-bin kubectl-ai --kubeconfig ${KUBECONFIG:-~/.kube/config} --enable-tool-use-shim=false --llm-provider=${PROVIDER} --models=${MODEL} --quiet --output-dir=${OUTPUT_DIR} --cluster-creation-policy=${CLUSTER_CREATION_POLICY} --concurrency ${CONCURRENCY} --tasks-dir=${REPO_ROOT}/k8s-ai-bench/tasks "
 
-  # Add task pattern if it was supplied
   if [ -n "$TASK_PATTERN" ]; then
-    TEST_ARGS+="--task-pattern=${TASK_PATTERN} "
+    K8S_AI_BENCH_ARGS+="--task-pattern=${TASK_PATTERN} "
     echo "Applying task pattern: ${TASK_PATTERN}"
   fi
 
-  # Execute the make command and capture the evaluation time line
+  # Execute the k8s-ai-bench command and capture the evaluation time line
   run_time_line=$( \
     OPENAI_API_KEY="not needed" \
     OPENAI_API_BASE="$API_BASE" \
-    TEST_ARGS="$TEST_ARGS" \
-    make run-evals | tee /dev/tty | grep '^Total evaluation time:' \
+    "${K8S_AI_BENCH_BIN}" run ${K8S_AI_BENCH_ARGS} | tee /dev/tty | grep '^Total evaluation time:' \
   )
 
-  # Check for errors in the make command
   if [ ${PIPESTATUS[0]} -ne 0 ]; then
-    echo "Error on iteration $i during 'make run-evals'. Aborting loop."
+    echo "Error on iteration $i during 'k8s-ai-bench run'. Aborting loop."
     exit 1
   fi
 
-  echo "---"
   echo "Analyzing results for iteration $i..."
   
   # Paths for analysis files
-  MARKDOWN_FILE="${OUTPUT_DIR}/k8s-bench.md"
-  JSON_FILE="${OUTPUT_DIR}/k8s-bench.json"
+  MARKDOWN_FILE="${OUTPUT_DIR}/k8s-ai-bench.md"
+  JSON_FILE="${OUTPUT_DIR}/k8s-ai-bench.json"
+  JSONL_FILE="${OUTPUT_DIR}/k8s-ai-bench.jsonl"
 
   # Run for markdown format
-  "${K8S_BENCH_BIN}" analyze --input-dir="${OUTPUT_DIR}" --results-filepath="${MARKDOWN_FILE}" --output-format=markdown --show-failures
+  "${K8S_AI_BENCH_BIN}" analyze --input-dir="${OUTPUT_DIR}" --results-filepath="${MARKDOWN_FILE}" --output-format=markdown --show-failures
   if [ $? -ne 0 ]; then
     echo "Error on iteration $i during Markdown analysis. Aborting loop."
     exit 1
   fi
 
   # Run for json format
-  "${K8S_BENCH_BIN}" analyze --input-dir="${OUTPUT_DIR}" --results-filepath="${JSON_FILE}" --output-format=json --show-failures
+  "${K8S_AI_BENCH_BIN}" analyze --input-dir="${OUTPUT_DIR}" --results-filepath="${JSON_FILE}" --output-format=json --show-failures
   if [ $? -ne 0 ]; then
     echo "Error on iteration $i during JSON analysis. Aborting loop."
+    exit 1
+  fi
+
+  # Run for jsonl format
+  "${K8S_AI_BENCH_BIN}" analyze --input-dir="${OUTPUT_DIR}" --results-filepath="${JSONL_FILE}" --output-format=jsonl --show-failures
+  if [ $? -ne 0 ]; then
+    echo "Error on iteration $i during JSONL analysis. Aborting loop."
     exit 1
   fi
 
@@ -157,8 +157,6 @@ do
     echo "" >> "${MARKDOWN_FILE}"
     echo "---" >> "${MARKDOWN_FILE}"
     echo "**Total evaluation time:** ${time_value}" >> "${MARKDOWN_FILE}"
-    
-    echo "Appended evaluation time to ${MARKDOWN_FILE}"
   else
     echo "Warning: Could not find evaluation time for iteration $i."
   fi

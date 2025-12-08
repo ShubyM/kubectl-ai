@@ -22,6 +22,7 @@ import (
 	"html/template"
 	"io"
 	"os"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -31,6 +32,7 @@ import (
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/api"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/journal"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/mcp"
+	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/sandbox"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/sessions"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/tools"
 	"github.com/google/uuid"
@@ -84,6 +86,11 @@ type Agent struct {
 
 	// Kubeconfig is the path to the kubeconfig file.
 	Kubeconfig string
+	// Sandbox indicates whether to execute tools in a sandbox environment
+	Sandbox string
+
+	// SandboxImage is the container image to use for the sandbox
+	SandboxImage string
 
 	SkipPermissions bool
 
@@ -101,9 +108,12 @@ type Agent struct {
 
 	workDir string
 
-	// session tracks the current session of the agent
-	// this is used by the UI to track the state of the agent and the conversation
-	session *api.Session
+	// executor is the executor for tool execution
+	executor sandbox.Executor
+
+	// Session optionally provides a session to use.
+	// This is used by the UI to track the state of the agent and the conversation.
+	Session *api.Session
 
 	// protects session from concurrent access
 	sessionMu sync.Mutex
@@ -117,17 +127,17 @@ type Agent struct {
 	// ChatMessageStore is the underlying session persistence layer.
 	ChatMessageStore api.ChatMessageStore
 
+	// SessionBackend is the configured backend for session persistence (e.g., memory, filesystem).
+	SessionBackend string
+
 	// lastErr is the most recent error run into, for use across the stack
 	lastErr error
 }
 
-// Assert Session implements ChatMessageStore
-var _ api.ChatMessageStore = &sessions.Session{}
-
 // Assert InMemoryChatStore implements ChatMessageStore
 var _ api.ChatMessageStore = &sessions.InMemoryChatStore{}
 
-func (s *Agent) Session() *api.Session {
+func (s *Agent) GetSession() *api.Session {
 	s.sessionMu.Lock()
 	defer s.sessionMu.Unlock()
 
@@ -135,7 +145,7 @@ func (s *Agent) Session() *api.Session {
 	// is also copied, providing the caller with a snapshot of the messages
 	// at this point in time. The UI should treat the messages as read-only
 	// to avoid race conditions.
-	sessionCopy := *s.session
+	sessionCopy := *s.Session
 	return &sessionCopy
 }
 
@@ -150,11 +160,10 @@ func (c *Agent) addMessage(source api.MessageSource, messageType api.MessageType
 		Payload:   payload,
 		Timestamp: time.Now(),
 	}
-	if c.session.ChatMessageStore != nil {
-		c.session.ChatMessageStore.AddChatMessage(message)
-	}
 
-	c.session.LastModified = time.Now()
+	// session should always have a ChatMessageStore at this point
+	c.Session.ChatMessageStore.AddChatMessage(message)
+	c.Session.LastModified = time.Now()
 	c.Output <- message
 	c.recordJournalMessage(message)
 	return message
@@ -230,8 +239,8 @@ func (c *Agent) setAgentState(newState api.AgentState) {
 	currentState := c.agentState()
 	if currentState != newState {
 		klog.Infof("Agent state changing from %s to %s", currentState, newState)
-		c.session.AgentState = newState
-		c.session.LastModified = time.Now()
+		c.Session.AgentState = newState
+		c.Session.LastModified = time.Now()
 	}
 }
 
@@ -244,7 +253,7 @@ func (c *Agent) AgentState() api.AgentState {
 // agentState returns the agent state without locking.
 // The caller is responsible for locking.
 func (c *Agent) agentState() api.AgentState {
-	return c.session.AgentState
+	return c.Session.AgentState
 }
 
 func (s *Agent) Init(ctx context.Context) error {
@@ -261,18 +270,40 @@ func (s *Agent) Init(ctx context.Context) error {
 		return fmt.Errorf("RunOnce mode requires an initial query to be provided")
 	}
 
-	s.session = &api.Session{
-		Messages:         s.ChatMessageStore.ChatMessages(),
-		AgentState:       api.AgentStateIdle,
-		ChatMessageStore: s.ChatMessageStore,
+	if s.SessionBackend == "" {
+		s.SessionBackend = "memory"
 	}
 
-	if session, ok := s.ChatMessageStore.(*sessions.Session); ok {
-		s.loadSession(session.ID)
+	if s.Session != nil {
+		if s.Session.ChatMessageStore == nil {
+			s.Session.ChatMessageStore = sessions.NewInMemoryChatStore()
+		}
+		s.ChatMessageStore = s.Session.ChatMessageStore
+		if s.Session.ID == "" {
+			s.Session.ID = uuid.New().String()
+		}
+		if s.Session.CreatedAt.IsZero() {
+			s.Session.CreatedAt = time.Now()
+		}
+		if s.Session.LastModified.IsZero() {
+			s.Session.LastModified = time.Now()
+		}
+		s.Session.Messages = s.Session.ChatMessageStore.ChatMessages()
 	} else {
-		s.session.ID = uuid.New().String()
-		s.session.CreatedAt = time.Now()
-		s.session.LastModified = time.Now()
+		if s.ChatMessageStore == nil {
+			s.ChatMessageStore = sessions.NewInMemoryChatStore()
+		}
+
+		s.Session = &api.Session{
+			ID:               uuid.New().String(),
+			ProviderID:       s.Provider,
+			ModelID:          s.Model,
+			Messages:         s.ChatMessageStore.ChatMessages(),
+			AgentState:       api.AgentStateIdle,
+			ChatMessageStore: s.ChatMessageStore,
+			CreatedAt:        time.Now(),
+			LastModified:     time.Now(),
+		}
 	}
 
 	// Create a temporary working directory
@@ -283,6 +314,56 @@ func (s *Agent) Init(ctx context.Context) error {
 	}
 
 	log.Info("Created temporary working directory", "workDir", workDir)
+
+	switch s.Sandbox {
+	case "k8s":
+		sandboxName := fmt.Sprintf("kubectl-ai-sandbox-%s", uuid.New().String()[:8])
+
+		// Use default image if not specified
+		sandboxImage := s.SandboxImage
+		if sandboxImage == "" {
+			sandboxImage = "bitnami/kubectl:latest"
+		}
+
+		// Create sandbox with kubeconfig
+		sb, err := sandbox.NewKubernetesSandbox(sandboxName,
+			sandbox.WithKubeconfig(s.Kubeconfig),
+			sandbox.WithImage(sandboxImage),
+		)
+		if err != nil {
+			return fmt.Errorf("failed to create sandbox: %w", err)
+		}
+
+		s.executor = sb
+		log.Info("Created sandbox", "name", sandboxName, "image", sandboxImage)
+
+	case "seatbelt":
+		if runtime.GOOS != "darwin" {
+			return fmt.Errorf("seatbelt sandbox is only supported on macOS")
+		}
+		s.executor = sandbox.NewSeatbeltExecutor()
+		log.Info("Using Seatbelt executor")
+
+	case "":
+		// No sandbox, use local executor
+		s.executor = sandbox.NewLocalExecutor()
+
+	default:
+		return fmt.Errorf("unknown sandbox type: %s", s.Sandbox)
+	}
+
+	s.workDir = workDir
+
+	// Register tools with executor if none registered yet
+	// We need to preserve existing tools (e.g. custom tools) while ensuring we have a fresh map
+	// for this agent instance to avoid polluting the global default tools.
+	existingTools := s.Tools.AllTools()
+	s.Tools.Init()
+	for _, tool := range existingTools {
+		s.Tools.RegisterTool(tool)
+	}
+	s.Tools.RegisterTool(tools.NewBashTool(s.executor))
+	s.Tools.RegisterTool(tools.NewKubectlTool(s.executor))
 
 	systemPrompt, err := s.generatePrompt(ctx, defaultSystemPromptTemplate, PromptData{
 		Tools:             s.Tools,
@@ -305,7 +386,7 @@ func (s *Agent) Init(ctx context.Context) error {
 			Jitter:         true,
 		},
 	)
-	err = s.llmChat.Initialize(s.session.ChatMessageStore.ChatMessages())
+	err = s.llmChat.Initialize(s.Session.ChatMessageStore.ChatMessages())
 	if err != nil {
 		return fmt.Errorf("initializing chat session: %w", err)
 	}
@@ -335,7 +416,6 @@ func (s *Agent) Init(ctx context.Context) error {
 			return fmt.Errorf("setting function definitions: %w", err)
 		}
 	}
-	s.workDir = workDir
 
 	return nil
 }
@@ -351,6 +431,18 @@ func (c *Agent) Close() error {
 	// Close MCP client connections
 	if err := c.CloseMCPClient(); err != nil {
 		klog.Warningf("error closing MCP client: %v", err)
+	}
+
+	// Close sandbox if enabled
+	// Close executor if it exists
+	if c.executor != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		if err := c.executor.Close(ctx); err != nil {
+			klog.Warningf("error cleaning up executor: %v", err)
+		} else {
+			klog.Info("Executor cleaned up successfully")
+		}
 	}
 	return nil
 }
@@ -396,13 +488,13 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 				c.pendingFunctionCalls = []ToolCallAnalysis{}
 			}
 		} else {
-			if len(c.session.Messages) > 0 {
+			if len(c.Session.Messages) > 0 {
 				// Resuming existing session
-				greetingMessage := "Welcome back. What can I help you with today?\n (Don't want to continue your last session? Use --new-session)"
+				greetingMessage := fmt.Sprintf("Welcome back. What can I help you with today?\n (Don't want to continue your last session? Use --new-session)\n\n%s", c.Session.String())
 				c.addMessage(api.MessageSourceAgent, api.MessageTypeText, greetingMessage)
 			} else {
 				// Starting new session
-				greetingMessage := "Hey there, what can I help you with today?"
+				greetingMessage := fmt.Sprintf("Hey there, what can I help you with today?\n\n%s", c.Session.String())
 				c.addMessage(api.MessageSourceAgent, api.MessageTypeText, greetingMessage)
 			}
 		}
@@ -502,7 +594,7 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 							log.Error(err, "error dispatching tool calls")
 							c.setAgentState(api.AgentStateDone)
 							c.pendingFunctionCalls = []ToolCallAnalysis{}
-							c.session.LastModified = time.Now()
+							c.Session.LastModified = time.Now()
 							c.addMessage(api.MessageSourceAgent, api.MessageTypeError, "Error: "+err.Error())
 							// In RunOnce mode, exit on tool execution error
 							if c.RunOnce {
@@ -521,7 +613,7 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 						c.currIteration = c.currIteration + 1
 						c.pendingFunctionCalls = []ToolCallAnalysis{}
 						c.setAgentState(api.AgentStateRunning)
-						c.session.LastModified = time.Now()
+						c.Session.LastModified = time.Now()
 					}
 				}
 			case api.AgentStateRunning:
@@ -653,7 +745,7 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 					log.Error(err, "error analyzing tool calls")
 					c.setAgentState(api.AgentStateDone)
 					c.pendingFunctionCalls = []ToolCallAnalysis{}
-					c.session.LastModified = time.Now()
+					c.Session.LastModified = time.Now()
 					c.addMessage(api.MessageSourceAgent, api.MessageTypeError, "Error: "+err.Error())
 					c.lastErr = err
 					continue
@@ -743,7 +835,7 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 					log.Error(err, "error dispatching tool calls")
 					c.setAgentState(api.AgentStateDone)
 					c.pendingFunctionCalls = []ToolCallAnalysis{}
-					c.session.LastModified = time.Now()
+					c.Session.LastModified = time.Now()
 					c.addMessage(api.MessageSourceAgent, api.MessageTypeError, "Error: "+err.Error())
 					c.lastErr = err
 					continue
@@ -763,10 +855,10 @@ func (c *Agent) handleMetaQuery(ctx context.Context, query string) (answer strin
 	case "clear", "reset":
 		c.sessionMu.Lock()
 		// TODO: Remove this check when session persistence is default
-		if err := c.session.ChatMessageStore.ClearChatMessages(); err != nil {
+		if err := c.Session.ChatMessageStore.ClearChatMessages(); err != nil {
 			return "Failed to clear the conversation", false, err
 		}
-		c.llmChat.Initialize(c.session.ChatMessageStore.ChatMessages())
+		c.llmChat.Initialize(c.Session.ChatMessageStore.ChatMessages())
 		c.sessionMu.Unlock()
 		return "Cleared the conversation.", true, nil
 	case "exit", "quit":
@@ -783,14 +875,7 @@ func (c *Agent) handleMetaQuery(ctx context.Context, query string) (answer strin
 	case "tools":
 		return "Available tools:\n\n  - " + strings.Join(c.Tools.Names(), "\n  - ") + "\n\n", true, nil
 	case "session":
-		if s, ok := c.ChatMessageStore.(*sessions.Session); ok {
-			out, err := s.String()
-			if err != nil {
-				return "", false, fmt.Errorf("failed to get session string: %w", err)
-			}
-			return out, true, nil
-		}
-		return "Session not found (session persistence not enabled)", true, nil
+		return c.Session.String(), true, nil
 
 	case "save-session":
 		savedSessionID, err := c.SaveSession()
@@ -800,7 +885,7 @@ func (c *Agent) handleMetaQuery(ctx context.Context, query string) (answer strin
 		return "Saved session as " + savedSessionID, true, nil
 
 	case "sessions":
-		manager, err := sessions.NewSessionManager()
+		manager, err := sessions.NewSessionManager(c.SessionBackend)
 		if err != nil {
 			return "", false, fmt.Errorf("failed to create session manager: %w", err)
 		}
@@ -820,18 +905,12 @@ func (c *Agent) handleMetaQuery(ctx context.Context, query string) (answer strin
 		availableSessions += "--\t\t\t-------\t\t\t-------------\t\t-----\t\t--------\n"
 
 		for _, session := range sessionList {
-			metadata, err := session.LoadMetadata()
-			if err != nil {
-				availableSessions += fmt.Sprintf("%s\t\t<error loading metadata>\n", session.ID)
-				continue
-			}
-
 			availableSessions += fmt.Sprintf("%s\t%s\t%s\t%s\t%s\n",
 				session.ID,
-				metadata.CreatedAt.Format("2006-01-02 15:04"),
-				metadata.LastAccessed.Format("2006-01-02 15:04"),
-				metadata.ModelID,
-				metadata.ProviderID)
+				session.CreatedAt.Format("2006-01-02 15:04"),
+				session.LastModified.Format("2006-01-02 15:04"),
+				session.ModelID,
+				session.ProviderID)
 		}
 		// close the ```text box
 		availableSessions += "```"
@@ -857,45 +936,53 @@ func (c *Agent) SaveSession() (string, error) {
 	c.sessionMu.Lock()
 	defer c.sessionMu.Unlock()
 
-	manager, err := sessions.NewSessionManager()
+	manager, err := sessions.NewSessionManager(c.SessionBackend)
 	if err != nil {
 		return "", fmt.Errorf("failed to create session manager: %w", err)
 	}
-	foundSession, _ := manager.FindSessionByID(c.session.ID)
-	if foundSession != nil {
-		return foundSession.ID, nil
+	if c.Session != nil {
+		foundSession, _ := manager.FindSessionByID(c.Session.ID)
+		if foundSession != nil {
+			return foundSession.ID, nil
+		}
 	}
+
 	metadata := sessions.Metadata{
-		CreatedAt:    c.session.CreatedAt,
+		CreatedAt:    c.Session.CreatedAt,
 		LastAccessed: time.Now(),
 		ModelID:      c.Model,
 		ProviderID:   c.Provider,
 	}
+
 	newSession, err := manager.NewSession(metadata)
 	if err != nil {
 		return "", fmt.Errorf("failed to create new session: %w", err)
 	}
 
 	messages := c.ChatMessageStore.ChatMessages()
-	if err := newSession.SetChatMessages(messages); err != nil {
+	if err := newSession.ChatMessageStore.SetChatMessages(messages); err != nil {
 		return "", fmt.Errorf("failed to save chat messages to new session: %w", err)
 	}
 
-	c.ChatMessageStore = newSession
-	c.session.ChatMessageStore = newSession
-	c.llmChat.Initialize(c.ChatMessageStore.ChatMessages())
+	c.ChatMessageStore = newSession.ChatMessageStore
+	c.Session = newSession
+	c.Session.Messages = messages
+
+	if c.llmChat != nil {
+		_ = c.llmChat.Initialize(c.Session.ChatMessageStore.ChatMessages())
+	}
 
 	return newSession.ID, nil
 }
 
 // loadSession loads a session by ID (or latest), updates the agent's state, and re-initializes the chat.
 func (c *Agent) loadSession(sessionID string) error {
-	manager, err := sessions.NewSessionManager()
+	manager, err := sessions.NewSessionManager(c.SessionBackend)
 	if err != nil {
 		return fmt.Errorf("failed to create session manager: %w", err)
 	}
 
-	var session *sessions.Session
+	var session *api.Session
 	if sessionID == "" || sessionID == "latest" {
 		s, err := manager.GetLatestSession()
 		if err != nil {
@@ -917,24 +1004,21 @@ func (c *Agent) loadSession(sessionID string) error {
 	c.sessionMu.Lock()
 	defer c.sessionMu.Unlock()
 
-	c.ChatMessageStore = session
-	c.session.ChatMessageStore = session
-	c.session.Messages = session.ChatMessages()
-	metadata, err := session.LoadMetadata()
-	if err != nil {
-		return fmt.Errorf("failed to load session metadata: %w", err)
+	if session.ChatMessageStore == nil {
+		session.ChatMessageStore = sessions.NewInMemoryChatStore()
 	}
-	c.session.ID = session.ID
-	c.session.CreatedAt = metadata.CreatedAt
-	now := time.Now()
-	c.session.LastModified = now
-	metadata.LastAccessed = now
-	if err := session.SaveMetadata(metadata); err != nil {
+
+	c.Session = session
+	c.ChatMessageStore = session.ChatMessageStore
+	c.Session.Messages = session.ChatMessageStore.ChatMessages()
+	c.Session.LastModified = time.Now()
+
+	if err := manager.UpdateLastAccessed(session); err != nil {
 		return fmt.Errorf("failed to update session metadata: %w", err)
 	}
 
 	if c.llmChat != nil {
-		if err := c.llmChat.Initialize(c.session.ChatMessageStore.ChatMessages()); err != nil {
+		if err := c.llmChat.Initialize(c.Session.ChatMessageStore.ChatMessages()); err != nil {
 			return fmt.Errorf("failed to re-initialize chat with new session: %w", err)
 		}
 	}
@@ -965,6 +1049,7 @@ func (c *Agent) DispatchToolCalls(ctx context.Context) error {
 		output, err := call.ParsedToolCall.InvokeTool(ctx, tools.InvokeToolOptions{
 			Kubeconfig: c.Kubeconfig,
 			WorkDir:    c.workDir,
+			Executor:   c.executor,
 		})
 
 		if err != nil {
@@ -974,7 +1059,7 @@ func (c *Agent) DispatchToolCalls(ctx context.Context) error {
 		}
 
 		// Handle timeout message using UI blocks
-		if execResult, ok := output.(*tools.ExecResult); ok && execResult != nil && execResult.StreamType == "timeout" {
+		if execResult, ok := output.(*sandbox.ExecResult); ok && execResult != nil && execResult.StreamType == "timeout" {
 			c.addMessage(api.MessageSourceAgent, api.MessageTypeError, "\nTimeout reached after 7 seconds\n")
 		}
 		// Add the tool call result to maintain conversation flow

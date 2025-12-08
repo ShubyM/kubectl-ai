@@ -11,6 +11,21 @@ efficient.
 
 ![kubectl-ai demo GIF using: kubectl-ai "how's nginx app doing in my cluster"](./.github/kubectl-ai.gif)
 
+## Table of Contents
+
+- [Quick Start](#quick-start)
+  - [Installation](#installation)
+  - [Usage](#usage)
+- [Configuration](#configuration)
+- [Tools](#tools)
+- [Docker Quick Start](#docker-quick-start)
+- [MCP Client Mode](#mcp-client-mode)
+- [Extras](#extras)
+- [MCP Server Mode](#mcp-server-mode)
+- [k8s-bench](#k8s-bench)
+- [Start Contributing](#start-contributing)
+- [Learning Resources](#learning-resources)
+
 ## Quick Start
 
 First, ensure that kubectl is installed and configured.
@@ -442,9 +457,9 @@ The enhanced mode provides AI clients with access to both Kubernetes operations 
 
 📖 **For detailed configuration, examples, and troubleshooting, see the [MCP Server Documentation](docs/mcp-server.md).**
 
-## k8s-bench
+## k8s-ai-bench
 
-kubectl-ai project includes [k8s-bench](./k8s-bench/README.md) - a benchmark to evaluate performance of different LLM models on Kubernetes related tasks.
+kubectl-ai project includes [k8s-ai-bench](./k8s-ai-bench/README.md) - a benchmark to evaluate performance of different LLM models on Kubernetes related tasks.
 
 ### Latest Benchmark Results (August 2025)
 
@@ -461,12 +476,18 @@ Comprehensive evaluation on identical 10-task Kubernetes benchmark with proper C
 **Test Environment**: Kind cluster v1.27.3 with Calico CNI (full NetworkPolicy support)
 **Tasks**: create-pod, create-pod-mount-configmaps, create-pod-resources-limits, create-network-policy, fix-crashloop, fix-image-pull, fix-service-routing, list-images-for-pods, scale-deployment, scale-down-deployment
 
-See [full report](./k8s-bench.md) for more details.
+See [full report](./k8s-ai-bench.md) for more details.
 
 ## Start Contributing
 
 We welcome contributions to `kubectl-ai` from the community. Take a look at our
 [contribution guide](contributing.md) to get started.
+
+## Learning Resources
+
+### Talks and Presentations
+
+- [From Natural Language to K8s Operations: The MCP Architecture and Practice of kubectl-ai](https://blog.wu-boy.com/2025/10/from-natural-language-to-k8s-operations-the-mcp-architecture-and-practice-of-kubectl-ai-en) - A comprehensive presentation covering the architecture and practical usage of kubectl-ai with MCP (Model Context Protocol).
 
 ---
 
