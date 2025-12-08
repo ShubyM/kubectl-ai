@@ -476,8 +476,8 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 	}
 
 	var sessionID string
-	if s, ok := chatStore.(*sessions.Session); ok && s != nil {
-		sessionID = s.ID
+	if session != nil {
+		sessionID = session.ID
 	}
 	journal.RecordSessionMetadata(ctx, recorder, journal.SessionMetadata{
 		SessionID:   sessionID,
