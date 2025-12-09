@@ -15,10 +15,88 @@
 package sessions
 
 import (
+	"errors"
+	"sort"
 	"sync"
 
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/api"
 )
+
+type memoryStore struct {
+	mu       sync.RWMutex
+	sessions map[string]*api.Session
+}
+
+func newMemoryStore() Store {
+	return &memoryStore{sessions: make(map[string]*api.Session)}
+}
+
+func (m *memoryStore) GetSession(id string) (*api.Session, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	session, ok := m.sessions[id]
+	if !ok {
+		return nil, errors.New("session not found")
+	}
+	return session, nil
+}
+
+func (m *memoryStore) CreateSession(session *api.Session) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, exists := m.sessions[session.ID]; exists {
+		return errors.New("session already exists")
+	}
+
+	if session.ChatMessageStore == nil {
+		session.ChatMessageStore = NewInMemoryChatStore()
+	}
+
+	m.sessions[session.ID] = session
+	return nil
+}
+
+func (m *memoryStore) UpdateSession(session *api.Session) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, exists := m.sessions[session.ID]; !exists {
+		return errors.New("session not found")
+	}
+
+	m.sessions[session.ID] = session
+	return nil
+}
+
+func (m *memoryStore) ListSessions() ([]*api.Session, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	sessions := make([]*api.Session, 0, len(m.sessions))
+	for _, session := range m.sessions {
+		sessions = append(sessions, session)
+	}
+
+	sort.Slice(sessions, func(i, j int) bool {
+		return sessions[i].LastModified.After(sessions[j].LastModified)
+	})
+
+	return sessions, nil
+}
+
+func (m *memoryStore) DeleteSession(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, exists := m.sessions[id]; !exists {
+		return errors.New("session not found")
+	}
+
+	delete(m.sessions, id)
+	return nil
+}
 
 // InMemoryChatStore is an in-memory implementation of the api.ChatMessageStore interface.
 // It stores chat messages in a slice and is safe for concurrent use.
@@ -54,7 +132,6 @@ func (s *InMemoryChatStore) SetChatMessages(newHistory []*api.Message) error {
 func (s *InMemoryChatStore) ChatMessages() []*api.Message {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	// Return a copy to prevent race conditions on the slice.
 	messageCopy := make([]*api.Message, len(s.messages))
 	copy(messageCopy, s.messages)
 	return messageCopy
