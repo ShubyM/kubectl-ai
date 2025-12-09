@@ -346,6 +346,12 @@ func (opt *Options) bindCLIFlags(f *pflag.FlagSet) error {
 func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 	var err error // Declare err once for the whole function
 
+	// Automatically upgrade backend to filesystem if session persistence flags are requested explicitly.
+	if (opt.NewSession || opt.ResumeSession != "" || opt.ListSessions || opt.DeleteSession != "") && opt.SessionBackend == "memory" {
+		klog.Infof("Upgrading session-backend to 'filesystem' based on provided flags")
+		opt.SessionBackend = "filesystem"
+	}
+
 	// Validate flag combinations
 	if opt.ExternalTools && !opt.MCPServer {
 		return fmt.Errorf("--external-tools can only be used with --mcp-server")
@@ -421,7 +427,9 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 			if err != nil {
 				return fmt.Errorf("failed to create a new session: %w", err)
 			}
-			klog.Infof("Created new session: %s\n", session.ID)
+			if opt.SessionBackend == "filesystem" {
+				klog.Infof("Created new session: %s\n", session.ID)
+			}
 		} else {
 			if opt.ResumeSession == "" || opt.ResumeSession == "latest" {
 				session, err = sessionManager.GetLatestSession()
@@ -437,7 +445,9 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 					if err != nil {
 						return fmt.Errorf("failed to create new session: %w", err)
 					}
-					klog.Infof("No previous session found. Created new session: %s\n", session.ID)
+					if opt.SessionBackend == "filesystem" {
+						klog.Infof("No previous session found. Created new session: %s\n", session.ID)
+					}
 				}
 			} else {
 				sessionID := opt.ResumeSession
