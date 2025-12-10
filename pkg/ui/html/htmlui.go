@@ -95,9 +95,9 @@ type HTMLUserInterface struct {
 	httpServer         *http.Server
 	httpServerListener net.Listener
 
-	manager        *agent.AgentManager
-	sessionManager *sessions.SessionManager
-	journal        journal.Recorder
+	manager         *agent.AgentManager
+	sessionManager  *sessions.SessionManager
+	journal         journal.Recorder
 	defaultModel    string
 	defaultProvider string
 

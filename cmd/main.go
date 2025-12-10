@@ -490,7 +490,7 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to create a new session: %w", err)
 		}
-		
+
 		defaultAgent, err = agentManager.GetAgent(ctx, session.ID)
 		if err != nil {
 			return fmt.Errorf("failed to get agent for new session: %w", err)
