@@ -413,15 +413,15 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 
 	// Initialize session management
 	var session *api.Session
-	var sessionStore *sessions.SessionManager
+	var sessionManager *sessions.SessionManager
 
-	sessionStore, err = sessions.NewSessionManager(opt.SessionBackend)
+	sessionManager, err = sessions.NewSessionManager(opt.SessionBackend)
 	if err != nil {
 		return fmt.Errorf("failed to create session manager: %w", err)
 	}
 
-	// Build factory for new agents
-	factory := func(ctx context.Context) (*agent.Agent, error) {
+	// Build agentFactory for new agents
+	agentFactory := func(ctx context.Context) (*agent.Agent, error) {
 		var client gollm.Client
 		var err error
 		if opt.SkipVerifySSL {
@@ -455,14 +455,14 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 		}, nil
 	}
 
-	sessionMgr := agent.NewManager(factory, sessionStore)
+	agentManager := agent.NewAgentManager(agentFactory, sessionManager)
 
-	// Register cleanup for all sessions
-	defer sessionMgr.Close()
+	// Register cleanup for all sessions and agents
+	defer agentManager.Close()
 
 	if opt.ResumeSession != "" {
 		if opt.ResumeSession == "latest" {
-			session, err = sessionStore.GetLatestSession()
+			session, err = sessionManager.GetLatestSession()
 			if err != nil {
 				return fmt.Errorf("failed to get latest session: %w", err)
 			}
@@ -471,7 +471,7 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 				klog.Info("No previous session found to resume. Creating new session.")
 			}
 		} else {
-			session, err = sessionStore.FindSessionByID(opt.ResumeSession)
+			session, err = sessionManager.FindSessionByID(opt.ResumeSession)
 			if err != nil {
 				return fmt.Errorf("session %s not found: %w", opt.ResumeSession, err)
 			}
@@ -482,20 +482,28 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 
 	// If no session loaded (or resume failed/not requested), create a new one
 	if session == nil {
-		defaultAgent, err = sessionMgr.CreateSession(ctx)
+		meta := sessions.Metadata{
+			ModelID:    opt.ModelID,
+			ProviderID: opt.ProviderID,
+		}
+		session, err = sessionManager.NewSession(meta)
 		if err != nil {
 			return fmt.Errorf("failed to create a new session: %w", err)
 		}
-		session = defaultAgent.Session
+		
+		defaultAgent, err = agentManager.GetAgent(ctx, session.ID)
+		if err != nil {
+			return fmt.Errorf("failed to get agent for new session: %w", err)
+		}
 		klog.Infof("Created new session: %s\n", session.ID)
 	} else {
 		// Update last accessed for resumed session
-		if err := sessionStore.UpdateLastAccessed(session); err != nil {
+		if err := sessionManager.UpdateLastAccessed(session); err != nil {
 			klog.Warningf("Failed to update session last accessed time: %v", err)
 		}
 		klog.Infof("Resuming session: %s\n", session.ID)
 
-		defaultAgent, err = sessionMgr.GetAgent(ctx, session.ID)
+		defaultAgent, err = agentManager.GetAgent(ctx, session.ID)
 		if err != nil {
 			return fmt.Errorf("failed to get agent for session: %w", err)
 		}
@@ -511,7 +519,7 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 			return fmt.Errorf("creating terminal UI: %w", err)
 		}
 	case ui.UITypeWeb:
-		userInterface, err = html.NewHTMLUserInterface(sessionMgr, opt.UIListenAddress, recorder)
+		userInterface, err = html.NewHTMLUserInterface(agentManager, sessionManager, opt.ModelID, opt.ProviderID, opt.UIListenAddress, recorder)
 		if err != nil {
 			return fmt.Errorf("creating web UI: %w", err)
 		}

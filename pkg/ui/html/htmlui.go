@@ -30,6 +30,7 @@ import (
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/agent"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/api"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/journal"
+	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/sessions"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/ui"
 	"github.com/charmbracelet/glamour"
 	"golang.org/x/sync/errgroup"
@@ -94,8 +95,12 @@ type HTMLUserInterface struct {
 	httpServer         *http.Server
 	httpServerListener net.Listener
 
-	manager          *agent.Manager
-	journal          journal.Recorder
+	manager        *agent.AgentManager
+	sessionManager *sessions.SessionManager
+	journal        journal.Recorder
+	defaultModel    string
+	defaultProvider string
+
 	markdownRenderer *glamour.TermRenderer
 	broadcasters     map[string]*Broadcaster
 	broadcastersMu   sync.Mutex
@@ -106,11 +111,14 @@ type HTMLUserInterface struct {
 
 var _ ui.UI = &HTMLUserInterface{}
 
-func NewHTMLUserInterface(manager *agent.Manager, listenAddress string, journal journal.Recorder) (*HTMLUserInterface, error) {
+func NewHTMLUserInterface(manager *agent.AgentManager, sessionManager *sessions.SessionManager, defaultModel, defaultProvider string, listenAddress string, journal journal.Recorder) (*HTMLUserInterface, error) {
 	mux := http.NewServeMux()
 
 	u := &HTMLUserInterface{
 		manager:            manager,
+		sessionManager:     sessionManager,
+		defaultModel:       defaultModel,
+		defaultProvider:    defaultProvider,
 		journal:            journal,
 		broadcasters:       make(map[string]*Broadcaster),
 		broadcasterCancels: make(map[string]context.CancelFunc),
@@ -268,15 +276,26 @@ func (u *HTMLUserInterface) handleCreateSession(w http.ResponseWriter, req *http
 	ctx := req.Context()
 	log := klog.FromContext(ctx)
 
-	agent, err := u.manager.CreateSession(ctx)
+	meta := sessions.Metadata{
+		ModelID:    u.defaultModel,
+		ProviderID: u.defaultProvider,
+	}
+
+	session, err := u.sessionManager.NewSession(meta)
 	if err != nil {
 		log.Error(err, "creating new session")
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	// Ensure agent is started/loaded (though mostly for side effect of starting if not started)
+	if _, err := u.manager.GetAgent(ctx, session.ID); err != nil {
+		log.Error(err, "starting agent for new session")
+		// We don't fail the request here necessarily, but it's good to know.
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"id": agent.Session.ID})
+	json.NewEncoder(w).Encode(map[string]string{"id": session.ID})
 }
 
 func (u *HTMLUserInterface) handleRenameSession(w http.ResponseWriter, req *http.Request) {
