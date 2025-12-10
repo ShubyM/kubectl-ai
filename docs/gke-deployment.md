@@ -45,14 +45,11 @@ docker push "${IMAGE}"
 Create the namespaces and RBAC that the hosted agent requires:
 
 ```bash
-# Namespace that hosts the kubectl-ai Deployment
-kubectl create namespace kubectl-ai
-
 # Sandbox namespace + RBAC (creates `computer` namespace, service account, and reader roles)
 kubectl apply -f k8s/sandbox/all-in-one.yaml
 ```
 
-The sandbox manifest provisions the `computer` namespace and the `normal-user` service account used for sandbox pods. The Deployment manifest expects the `kubectl-ai` namespace to exist ahead of time.
+The sandbox manifest provisions the `computer` namespace and the `normal-user` service account used for sandbox pods. The `kubectl-ai-gke.yaml` manifest will create the `kubectl-ai` namespace automatically.
 
 ## 4. Configure the deployment manifest
 
