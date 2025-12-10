@@ -141,6 +141,17 @@ func NewTerminalUI(agent *agent.Agent, useTTYForInput bool, showToolOutput bool,
 }
 
 func (u *TerminalUI) Run(ctx context.Context) error {
+	session := u.agent.GetSession()
+	if len(session.Messages) > 0 {
+		greeting := "Welcome back. What can I help you with today?\n (Don't want to continue your last session? Use --new-session)"
+		// If it's a persistent session (not memory), print metadata
+		if u.agent.SessionBackend == "filesystem" {
+			greeting = fmt.Sprintf("%s\n\n%s", greeting, session.String())
+		}
+		out, _ := u.markdownRenderer.Render(greeting)
+		fmt.Printf("\n%s\n", out)
+	}
+
 	// Channel to signal when the agent has exited
 	agentExited := make(chan struct{})
 

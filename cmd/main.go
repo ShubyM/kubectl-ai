@@ -335,6 +335,7 @@ func (opt *Options) bindCLIFlags(f *pflag.FlagSet) error {
 	f.StringVar(&opt.ResumeSession, "resume-session", opt.ResumeSession, "ID of session to resume (use 'latest' for the most recent session)")
 	f.BoolVar(&opt.ListSessions, "list-sessions", opt.ListSessions, "list all available sessions")
 	f.StringVar(&opt.DeleteSession, "delete-session", opt.DeleteSession, "delete a session by ID")
+	f.BoolVar(&opt.NewSession, "new-session", opt.NewSession, "start a new persistent session")
 	f.StringVar(&opt.SessionBackend, "session-backend", opt.SessionBackend,
 		"session backend to use (memory or filesystem)")
 
@@ -343,6 +344,12 @@ func (opt *Options) bindCLIFlags(f *pflag.FlagSet) error {
 
 func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 	var err error
+
+	// Automatically upgrade backend to filesystem if session persistence flags are requested explicitly
+	if (opt.NewSession || opt.ResumeSession != "" || opt.ListSessions || opt.DeleteSession != "") && opt.SessionBackend == "memory" {
+		klog.Infof("Upgrading session-backend to 'filesystem' based on provided flags")
+		opt.SessionBackend = "filesystem"
+	}
 
 	// Validate flag combinations
 	if opt.ExternalTools && !opt.MCPServer {

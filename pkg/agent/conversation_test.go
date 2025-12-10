@@ -194,7 +194,7 @@ func TestHandleMetaQuery(t *testing.T) {
 				if err != nil {
 					t.Fatalf("creating session: %v", err)
 				}
-				a := &Agent{ChatMessageStore: sess.ChatMessageStore}
+				a := &Agent{ChatMessageStore: sess.ChatMessageStore, SessionBackend: "filesystem"}
 				a.Session = sess
 				return a
 			},

@@ -425,14 +425,9 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 				c.pendingFunctionCalls = []ToolCallAnalysis{}
 			}
 		} else {
-			if len(c.Session.Messages) > 0 {
-				// Resuming existing session
-				greetingMessage := fmt.Sprintf("Welcome back. What can I help you with today?\n (Don't want to continue your last session? Use --new-session)\n\n%s", c.Session.String())
-				c.addMessage(api.MessageSourceAgent, api.MessageTypeText, greetingMessage)
-			} else {
+			if len(c.Session.Messages) == 0 {
 				// Starting new session
-				greetingMessage := fmt.Sprintf("Hey there, what can I help you with today?\n\n%s", c.Session.String())
-				c.addMessage(api.MessageSourceAgent, api.MessageTypeText, greetingMessage)
+				c.addMessage(api.MessageSourceAgent, api.MessageTypeText, "Hey there, what can I help you with today?")
 			}
 		}
 		c.lastErr = nil
@@ -812,7 +807,10 @@ func (c *Agent) handleMetaQuery(ctx context.Context, query string) (answer strin
 	case "tools":
 		return "Available tools:\n\n  - " + strings.Join(c.Tools.Names(), "\n  - ") + "\n\n", true, nil
 	case "session":
-		return c.Session.String(), true, nil
+		if c.SessionBackend != "filesystem" {
+			return "Ephemeral session (memory backed). No persistent info available.", true, nil
+		}
+		return fmt.Sprintf("Current session:\n\n%s", c.Session.String()), true, nil
 
 	case "save-session":
 		savedSessionID, err := c.SaveSession()
