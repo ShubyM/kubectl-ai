@@ -141,7 +141,6 @@ func (t *CustomTool) Run(ctx context.Context, args map[string]any) (any, error) 
 	env := os.Environ()
 
 	// Use the injected executor, or fallback to local if not set (e.g. for global instance)
-	// In a properly initialized Agent, t.executor should be set.
 	executor := t.executor
 	if executor == nil {
 		executor = sandbox.NewLocalExecutor()
