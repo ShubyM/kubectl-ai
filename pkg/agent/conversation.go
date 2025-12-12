@@ -277,13 +277,11 @@ func (s *Agent) Init(ctx context.Context) error {
 	s.workDir = workDir
 
 	// Register tools with executor if none registered yet
-	// We need to preserve existing tools (e.g. custom tools) while ensuring we have a fresh map
-	// for this agent instance to avoid polluting the global default tools.
-	existingTools := s.Tools.AllTools()
-	s.Tools.Init()
-	for _, tool := range existingTools {
-		s.Tools.RegisterTool(tool)
-	}
+	// We clone existing tools (e.g. custom tools) to ensure we have a fresh map
+	// for this agent instance and to inject the session-specific executor.
+	// This avoids polluting the global default tools and ensures thread safety.
+	s.Tools = s.Tools.CloneWithExecutor(s.executor)
+
 	s.Tools.RegisterTool(tools.NewBashTool(s.executor))
 	s.Tools.RegisterTool(tools.NewKubectlTool(s.executor))
 
@@ -912,6 +910,11 @@ func (c *Agent) NewSession() (string, error) {
 
 		c.executor = sb
 		klog.Info("Created new sandbox for new session", "name", sandboxName)
+
+		// Re-bind all tools to the new executor
+		// This updates CustomTools to use the new sandbox, and we'll overwrite
+		// Bash/Kubectl below with new instances anyway.
+		c.Tools = c.Tools.CloneWithExecutor(c.executor)
 
 		c.Tools.RegisterTool(tools.NewBashTool(c.executor))
 		c.Tools.RegisterTool(tools.NewKubectlTool(c.executor))
