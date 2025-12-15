@@ -1,0 +1,84 @@
+# RBAC configuration for kubectl-ai to use agent-sandbox
+#
+# This file grants kubectl-ai the necessary permissions to:
+# 1. Create and manage Sandbox CRDs
+# 2. Access pods created by the agent-sandbox controller
+# 3. Create ConfigMaps for kubeconfig injection
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agent-sandbox-system
+---
+# ClusterRole for managing Sandbox resources
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubectl-ai-agent-sandbox-manager
+rules:
+# Sandbox CRD permissions
+- apiGroups: ["agents.x-k8s.io"]
+  resources: ["sandboxes"]
+  verbs: ["create", "get", "list", "delete", "watch", "update", "patch"]
+- apiGroups: ["agents.x-k8s.io"]
+  resources: ["sandboxes/status"]
+  verbs: ["get"]
+# Pod access for exec
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["pods/exec"]
+  verbs: ["create"]
+# ConfigMap management
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["create", "delete", "get"]
+---
+# Role for the computer namespace where sandboxes run
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kubectl-ai-computer-manager
+  namespace: computer
+rules:
+- apiGroups: ["agents.x-k8s.io"]
+  resources: ["sandboxes"]
+  verbs: ["create", "get", "list", "delete", "watch", "update", "patch"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["pods/exec"]
+  verbs: ["create"]
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["create", "delete", "get"]
+---
+# ClusterRoleBinding for kubectl-ai service account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubectl-ai-agent-sandbox-manager
+subjects:
+- kind: ServiceAccount
+  name: kubectl-ai
+  namespace: kubectl-ai
+roleRef:
+  kind: ClusterRole
+  name: kubectl-ai-agent-sandbox-manager
+  apiGroup: rbac.authorization.k8s.io
+---
+# RoleBinding in computer namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kubectl-ai-computer-manager
+  namespace: computer
+subjects:
+- kind: ServiceAccount
+  name: kubectl-ai
+  namespace: kubectl-ai
+roleRef:
+  kind: Role
+  name: kubectl-ai-computer-manager
+  apiGroup: rbac.authorization.k8s.io

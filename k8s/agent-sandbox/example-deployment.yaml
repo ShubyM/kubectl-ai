@@ -1,0 +1,64 @@
+# Example deployment of kubectl-ai configured to use agent-sandbox
+#
+# This example shows kubectl-ai deployed with agent-sandbox support
+# using gVisor for enhanced security isolation.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubectl-ai-agent-sandbox
+  namespace: kubectl-ai
+  labels:
+    app: kubectl-ai
+    sandbox-mode: agent-sandbox
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kubectl-ai
+      sandbox-mode: agent-sandbox
+  template:
+    metadata:
+      labels:
+        app: kubectl-ai
+        sandbox-mode: agent-sandbox
+    spec:
+      serviceAccountName: kubectl-ai
+      containers:
+      - name: kubectl-ai
+        image: kubectl-ai:latest  # Replace with actual image
+        args:
+        - "--sandbox=agent-sandbox"
+        - "--runtime-class=gvisor"
+        - "--sandbox-image=bitnami/kubectl:latest"
+        - "--mcp-server"
+        - "--mcp-server-mode=streamable-http"
+        env:
+        - name: GEMINI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: kubectl-ai-secrets
+              key: gemini-api-key
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+---
+# Service for MCP server
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubectl-ai-agent-sandbox
+  namespace: kubectl-ai
+spec:
+  selector:
+    app: kubectl-ai
+    sandbox-mode: agent-sandbox
+  ports:
+  - name: http
+    port: 9080
+    targetPort: 9080
+    protocol: TCP
+  type: ClusterIP

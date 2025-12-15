@@ -92,6 +92,10 @@ type Agent struct {
 	// SandboxImage is the container image to use for the sandbox
 	SandboxImage string
 
+	// RuntimeClass specifies the RuntimeClass for enhanced isolation (e.g., "gvisor", "kata")
+	// Only applicable when using agent-sandbox
+	RuntimeClass string
+
 	SkipPermissions bool
 
 	Tools tools.Tools
@@ -258,6 +262,34 @@ func (s *Agent) Init(ctx context.Context) error {
 
 		s.executor = sb
 		log.Info("Created sandbox", "name", sandboxName, "image", sandboxImage)
+
+	case "agent-sandbox":
+		sandboxName := fmt.Sprintf("kubectl-ai-sandbox-%s", uuid.New().String()[:8])
+
+		// Use default image if not specified
+		sandboxImage := s.SandboxImage
+		if sandboxImage == "" {
+			sandboxImage = "bitnami/kubectl:latest"
+		}
+
+		// Create agent-sandbox (uses Kubernetes agent-sandbox CRD)
+		opts := []sandbox.AgentSandboxOption{
+			sandbox.WithAgentSandboxKubeconfig(s.Kubeconfig),
+			sandbox.WithAgentSandboxImage(sandboxImage),
+		}
+
+		// Add runtime class if specified (e.g., "gvisor", "kata")
+		if s.RuntimeClass != "" {
+			opts = append(opts, sandbox.WithRuntimeClass(s.RuntimeClass))
+		}
+
+		sb, err := sandbox.NewAgentSandbox(sandboxName, opts...)
+		if err != nil {
+			return fmt.Errorf("failed to create agent-sandbox: %w", err)
+		}
+
+		s.executor = sb
+		log.Info("Created agent-sandbox", "name", sandboxName, "image", sandboxImage, "runtimeClass", s.RuntimeClass)
 
 	case "seatbelt":
 		if runtime.GOOS != "darwin" {

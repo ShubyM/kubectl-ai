@@ -129,12 +129,16 @@ type Options struct {
 	ShowToolOutput bool `json:"showToolOutput,omitempty"`
 
 	// Sandbox enables execution of tools in a sandbox environment.
-	// Supported values: "k8s", "seatbelt".
+	// Supported values: "k8s", "agent-sandbox", "seatbelt".
 	// If empty, tools are executed locally.
 	Sandbox string `json:"sandbox,omitempty"`
 
 	// SandboxImage is the container image to use for the sandbox
 	SandboxImage string `json:"sandboxImage,omitempty"`
+
+	// RuntimeClass specifies the RuntimeClass for enhanced isolation (e.g., "gvisor", "kata")
+	// Only applicable when using agent-sandbox
+	RuntimeClass string `json:"runtimeClass,omitempty"`
 }
 
 var defaultToolConfigPaths = []string{
@@ -329,8 +333,9 @@ func (opt *Options) bindCLIFlags(f *pflag.FlagSet) error {
 	f.BoolVar(&opt.SkipVerifySSL, "skip-verify-ssl", opt.SkipVerifySSL, "skip verifying the SSL certificate of the LLM provider")
 	f.BoolVar(&opt.ShowToolOutput, "show-tool-output", opt.ShowToolOutput, "show tool output in the terminal UI")
 
-	f.StringVar(&opt.Sandbox, "sandbox", opt.Sandbox, "execute tools in a sandbox environment (k8s, seatbelt)")
+	f.StringVar(&opt.Sandbox, "sandbox", opt.Sandbox, "execute tools in a sandbox environment (k8s, agent-sandbox, seatbelt)")
 	f.StringVar(&opt.SandboxImage, "sandbox-image", opt.SandboxImage, "container image to use for the sandbox")
+	f.StringVar(&opt.RuntimeClass, "runtime-class", opt.RuntimeClass, "RuntimeClass for enhanced isolation (e.g., gvisor, kata) - only for agent-sandbox")
 
 	f.StringVar(&opt.ResumeSession, "resume-session", opt.ResumeSession, "ID of session to resume (use 'latest' for the most recent session)")
 	f.BoolVar(&opt.ListSessions, "list-sessions", opt.ListSessions, "list all available sessions")
@@ -449,6 +454,7 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 			MCPClientEnabled:   opt.MCPClient,
 			Sandbox:            opt.Sandbox,
 			SandboxImage:       opt.SandboxImage,
+			RuntimeClass:       opt.RuntimeClass,
 			SessionBackend:     opt.SessionBackend,
 			RunOnce:            opt.Quiet,
 			InitialQuery:       queryFromCmd,

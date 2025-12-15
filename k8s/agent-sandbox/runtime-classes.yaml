@@ -1,0 +1,36 @@
+# RuntimeClass examples for use with agent-sandbox
+#
+# These provide enhanced isolation using different container runtimes.
+# Install the appropriate runtime on your nodes before applying these.
+
+---
+# gVisor RuntimeClass
+# Provides application kernel in userspace for reduced attack surface
+# Installation: https://gvisor.dev/docs/user_guide/install/
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: gvisor
+handler: runsc
+scheduling:
+  nodeSelector:
+    # Only schedule on nodes with gVisor installed
+    gvisor.enabled: "true"
+---
+# Kata Containers RuntimeClass
+# Provides VM-level isolation for maximum security
+# Installation: https://github.com/kata-containers/kata-containers/blob/main/docs/install/README.md
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: kata
+handler: kata
+scheduling:
+  nodeSelector:
+    # Only schedule on nodes with Kata Containers installed
+    kata.enabled: "true"
+overhead:
+  # Kata Containers has higher overhead due to VM creation
+  podFixed:
+    memory: "160Mi"
+    cpu: "250m"

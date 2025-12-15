@@ -1,0 +1,79 @@
+# SandboxWarmPool for kubectl-ai
+#
+# This creates a pool of pre-warmed sandbox instances for faster startup.
+# The agent-sandbox controller maintains ready-to-use sandboxes in this pool.
+apiVersion: agents.x-k8s.io/v1alpha1
+kind: SandboxWarmPool
+metadata:
+  name: kubectl-ai-warm-pool
+  namespace: computer
+spec:
+  # Template for sandboxes in the pool
+  template:
+    spec:
+      podTemplate:
+        spec:
+          serviceAccountName: normal-user
+          runtimeClassName: gvisor  # Use gVisor for security
+          containers:
+          - name: main
+            image: bitnami/kubectl:latest
+            command: ["sleep"]
+            args: ["infinity"]
+            env:
+            - name: KUBECONFIG
+              value: /etc/kube/config
+            - name: PATH
+              value: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/bitnami/kubectl/bin
+            resources:
+              requests:
+                memory: "128Mi"
+                cpu: "50m"
+              limits:
+                memory: "512Mi"
+                cpu: "500m"
+            volumeMounts:
+            - name: kubeconfig-volume
+              mountPath: /etc/kube
+              readOnly: true
+          volumes:
+          - name: kubeconfig-volume
+            configMap:
+              name: sandbox-kubeconfig
+              items:
+              - key: config
+                path: config
+          restartPolicy: Never
+
+  # Pool size configuration
+  minSize: 3   # Always keep at least 3 sandboxes ready
+  maxSize: 10  # Don't exceed 10 pre-warmed sandboxes
+
+  # Eviction policy
+  idleTimeout: 5m  # Evict sandboxes idle for more than 5 minutes
+---
+# Shared kubeconfig ConfigMap for warm pool
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sandbox-kubeconfig
+  namespace: computer
+data:
+  config: |
+    apiVersion: v1
+    clusters:
+    - cluster:
+        server: https://kubernetes.default.svc
+        certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+      name: default
+    contexts:
+    - context:
+        cluster: default
+        namespace: computer
+        user: default
+      name: default
+    current-context: default
+    users:
+    - name: default
+      user:
+        tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
