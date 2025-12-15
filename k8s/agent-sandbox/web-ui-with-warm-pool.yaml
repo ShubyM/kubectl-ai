@@ -1,0 +1,359 @@
+# kubectl-ai with agent-sandbox, Web UI, and Warm Pool
+#
+# This is the production-ready configuration with:
+# - Web UI for browser access
+# - agent-sandbox with warm pool for sub-second startup
+# - gVisor runtime for enhanced security
+# - Persistent sessions
+#
+# Usage:
+#   # 1. Apply all resources
+#   kubectl apply -f web-ui-with-warm-pool.yaml
+#
+#   # 2. Wait for warm pool to be ready
+#   kubectl wait --for=condition=ready sandboxwarmpool/kubectl-ai-warm-pool -n computer --timeout=300s
+#
+#   # 3. Port-forward to access
+#   kubectl port-forward -n kubectl-ai service/kubectl-ai-web 8888:80
+#
+#   # 4. Open browser
+#   open http://localhost:8888
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kubectl-ai
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: computer
+---
+# Main kubectl-ai deployment
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  name: kubectl-ai-web
+  namespace: kubectl-ai
+  labels:
+    app: kubectl-ai
+    ui-mode: web
+    sandbox-mode: agent-sandbox
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kubectl-ai
+      ui-mode: web
+  template:
+    metadata:
+      labels:
+        app: kubectl-ai
+        ui-mode: web
+        sandbox-mode: agent-sandbox
+    spec:
+      serviceAccountName: kubectl-ai
+      containers:
+      - name: kubectl-ai
+        image: kubectl-ai:latest
+        args:
+        # Web UI configuration
+        - --ui-type=web
+        - --ui-listen-address=0.0.0.0:8888
+        # agent-sandbox configuration
+        - --sandbox=agent-sandbox
+        - --runtime-class=gvisor
+        - --sandbox-image=bitnami/kubectl:latest
+        # Session management
+        - --session-backend=filesystem
+        # Model configuration
+        - --provider-id=gemini
+        - --model-id=gemini-2.5-pro
+        ports:
+        - name: http
+          containerPort: 8888
+          protocol: TCP
+        envFrom:
+        - secretRef:
+            name: kubectl-ai
+        volumeMounts:
+        - name: sessions
+          mountPath: /root/.kubectl-ai/sessions
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8888
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8888
+          initialDelaySeconds: 5
+          periodSeconds: 10
+      volumes:
+      - name: sessions
+        emptyDir: {}
+        # For persistent sessions across pod restarts, use PVC:
+        # persistentVolumeClaim:
+        #   claimName: kubectl-ai-sessions
+---
+kind: Secret
+apiVersion: v1
+metadata:
+  name: kubectl-ai
+  namespace: kubectl-ai
+  labels:
+    app: kubectl-ai
+type: Opaque
+stringData:
+  GEMINI_API_KEY: "your-gemini-api-key-here"
+---
+kind: ServiceAccount
+apiVersion: v1
+metadata:
+  name: kubectl-ai
+  namespace: kubectl-ai
+---
+# Service for port-forwarding
+kind: Service
+apiVersion: v1
+metadata:
+  name: kubectl-ai-web
+  namespace: kubectl-ai
+  labels:
+    app: kubectl-ai
+    ui-mode: web
+spec:
+  selector:
+    app: kubectl-ai
+    ui-mode: web
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8888
+    protocol: TCP
+  type: ClusterIP
+---
+# Warm pool for instant sandbox allocation
+apiVersion: agents.x-k8s.io/v1alpha1
+kind: SandboxWarmPool
+metadata:
+  name: kubectl-ai-warm-pool
+  namespace: computer
+spec:
+  template:
+    spec:
+      podTemplate:
+        spec:
+          serviceAccountName: normal-user
+          runtimeClassName: gvisor
+          containers:
+          - name: main
+            image: bitnami/kubectl:latest
+            command: ["sleep"]
+            args: ["infinity"]
+            env:
+            - name: KUBECONFIG
+              value: /etc/kube/config
+            - name: PATH
+              value: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/bitnami/kubectl/bin
+            resources:
+              requests:
+                memory: "128Mi"
+                cpu: "50m"
+              limits:
+                memory: "512Mi"
+                cpu: "500m"
+            volumeMounts:
+            - name: kubeconfig-volume
+              mountPath: /etc/kube
+              readOnly: true
+          volumes:
+          - name: kubeconfig-volume
+            configMap:
+              name: warm-pool-kubeconfig
+              items:
+              - key: config
+                path: config
+          restartPolicy: Never
+  minSize: 5   # Keep 5 sandboxes ready
+  maxSize: 20  # Don't exceed 20 pre-warmed sandboxes
+  idleTimeout: 10m
+---
+# Shared kubeconfig for warm pool
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: warm-pool-kubeconfig
+  namespace: computer
+data:
+  config: |
+    apiVersion: v1
+    clusters:
+    - cluster:
+        server: https://kubernetes.default.svc
+        certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+      name: default
+    contexts:
+    - context:
+        cluster: default
+        namespace: computer
+        user: default
+      name: default
+    current-context: default
+    users:
+    - name: default
+      user:
+        tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+---
+# Service account for sandboxes
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: normal-user
+  namespace: computer
+---
+# Read-only role for sandbox pods
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: reader-all-but-secrets
+  namespace: computer
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "configmaps", "persistentvolumeclaims", "events"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets", "statefulsets", "daemonsets"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: normal-user:reader
+  namespace: computer
+subjects:
+- kind: ServiceAccount
+  name: normal-user
+  namespace: computer
+roleRef:
+  kind: Role
+  name: reader-all-but-secrets
+  apiGroup: rbac.authorization.k8s.io
+---
+# Cluster-wide read access for sandboxes
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: reader-cluster-resources
+rules:
+- apiGroups: [""]
+  resources: ["nodes", "namespaces", "persistentvolumes"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["storage.k8s.io"]
+  resources: ["storageclasses"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: normal-user:reader-cluster
+subjects:
+- kind: ServiceAccount
+  name: normal-user
+  namespace: computer
+roleRef:
+  kind: ClusterRole
+  name: reader-cluster-resources
+  apiGroup: rbac.authorization.k8s.io
+---
+# ClusterRole for kubectl-ai to view resources
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubectl-ai:view
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+- kind: ServiceAccount
+  name: kubectl-ai
+  namespace: kubectl-ai
+---
+# ClusterRole for kubectl-ai to manage agent-sandbox resources
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubectl-ai-agent-sandbox-manager
+rules:
+- apiGroups: ["agents.x-k8s.io"]
+  resources: ["sandboxes"]
+  verbs: ["create", "get", "list", "delete", "watch", "update", "patch"]
+- apiGroups: ["agents.x-k8s.io"]
+  resources: ["sandboxes/status"]
+  verbs: ["get"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["pods/exec"]
+  verbs: ["create"]
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["create", "delete", "get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubectl-ai:agent-sandbox-manager
+subjects:
+- kind: ServiceAccount
+  name: kubectl-ai
+  namespace: kubectl-ai
+roleRef:
+  kind: ClusterRole
+  name: kubectl-ai-agent-sandbox-manager
+  apiGroup: rbac.authorization.k8s.io
+---
+# Role for kubectl-ai to manage resources in computer namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kubectl-ai-computer-manager
+  namespace: computer
+rules:
+- apiGroups: ["agents.x-k8s.io"]
+  resources: ["sandboxes"]
+  verbs: ["create", "get", "list", "delete", "watch", "update", "patch"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["pods/exec"]
+  verbs: ["create"]
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["create", "delete", "get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kubectl-ai-computer-manager
+  namespace: computer
+subjects:
+- kind: ServiceAccount
+  name: kubectl-ai
+  namespace: kubectl-ai
+roleRef:
+  kind: Role
+  name: kubectl-ai-computer-manager
+  apiGroup: rbac.authorization.k8s.io

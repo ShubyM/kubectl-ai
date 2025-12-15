@@ -36,7 +36,22 @@ For enhanced security with gVisor:
 kubectl apply -f runtime-classes.yaml
 ```
 
-### 4. Run kubectl-ai
+### 4. Deploy kubectl-ai
+
+#### Option A: Web UI (Recommended for multi-user access)
+
+```bash
+# Deploy with Web UI
+kubectl apply -f web-ui-deployment.yaml
+
+# Port-forward to access
+kubectl port-forward -n kubectl-ai service/kubectl-ai-web 8888:80
+
+# Open browser
+open http://localhost:8888
+```
+
+#### Option B: CLI (Direct command-line usage)
 
 ```bash
 kubectl-ai --sandbox=agent-sandbox "list all pods"
@@ -45,13 +60,30 @@ kubectl-ai --sandbox=agent-sandbox "list all pods"
 kubectl-ai --sandbox=agent-sandbox --runtime-class=gvisor "describe nodes"
 ```
 
+#### Option C: Production Web UI with Warm Pool
+
+```bash
+# Deploy everything including warm pool
+kubectl apply -f web-ui-with-warm-pool.yaml
+
+# Wait for warm pool to be ready
+kubectl wait --for=condition=ready sandboxwarmpool/kubectl-ai-warm-pool -n computer --timeout=300s
+
+# Port-forward
+kubectl port-forward -n kubectl-ai service/kubectl-ai-web 8888:80
+
+# Access at http://localhost:8888
+```
+
 ## Files in this Directory
 
 | File | Description |
 |------|-------------|
 | `rbac.yaml` | RBAC permissions for kubectl-ai to manage Sandbox resources |
 | `runtime-classes.yaml` | RuntimeClass definitions for gVisor and Kata Containers |
-| `example-deployment.yaml` | Example kubectl-ai deployment with agent-sandbox |
+| `example-deployment.yaml` | Example kubectl-ai with MCP server (for external API clients) |
+| `web-ui-deployment.yaml` | **Web UI deployment with port-forward access** ⭐ |
+| `web-ui-with-warm-pool.yaml` | **Production Web UI with warm pool** ⭐ |
 | `warm-pool.yaml` | SandboxWarmPool for pre-warmed sandboxes |
 
 ## Architecture
