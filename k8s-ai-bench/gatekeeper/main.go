@@ -14,8 +14,8 @@
 
 // gatekeeper-gen generates k8s-ai-bench tasks from the OPA Gatekeeper library.
 //
-// Tasks deploy actual resources to a cluster with Gatekeeper installed,
-// and use Gatekeeper's audit mode to verify compliance.
+// Tasks test whether AI models can correctly identify policy violations
+// by checking resources against Gatekeeper constraints in audit mode.
 package main
 
 import (
@@ -59,7 +59,6 @@ func main() {
 }
 
 func run(repoDir, outputDir string, skipClone, dryRun, clean bool) error {
-	// Clean existing tasks if requested
 	if clean && !dryRun {
 		fmt.Printf("Cleaning existing tasks in %s...\n", outputDir)
 		entries, err := os.ReadDir(outputDir)
@@ -76,20 +75,17 @@ func run(repoDir, outputDir string, skipClone, dryRun, clean bool) error {
 		}
 	}
 
-	// Clone or update the Gatekeeper library
 	if !skipClone {
 		if err := cloneOrUpdateRepo(repoDir); err != nil {
 			return fmt.Errorf("failed to clone/update repo: %w", err)
 		}
 	}
 
-	// Verify library directory exists
 	libraryDir := filepath.Join(repoDir, "library")
 	if _, err := os.Stat(libraryDir); os.IsNotExist(err) {
 		return fmt.Errorf("library directory not found at %s", libraryDir)
 	}
 
-	// Process all policy categories
 	categories := []string{"general", "pod-security-policy"}
 	var totalGenerated int
 
@@ -144,7 +140,6 @@ func cloneOrUpdateRepo(repoDir string) error {
 }
 
 func processPolicy(policyDir, category, policyName, outputDir string, dryRun bool) (int, error) {
-	// Read the template.yaml
 	templatePath := filepath.Join(policyDir, "template.yaml")
 	templateData, err := os.ReadFile(templatePath)
 	if err != nil {
@@ -164,7 +159,6 @@ func processPolicy(policyDir, category, policyName, outputDir string, dryRun boo
 		TemplateYAML: string(templateData),
 	}
 
-	// Use our curated description if available
 	if desc, ok := PolicyDescriptions[policyName]; ok {
 		policyInfo.Description = desc
 	} else if policyInfo.Description == "" {
@@ -175,7 +169,6 @@ func processPolicy(policyDir, category, policyName, outputDir string, dryRun boo
 		policyInfo.Title = formatTitle(policyName)
 	}
 
-	// Find samples directory
 	samplesDir := filepath.Join(policyDir, "samples")
 	if _, err := os.Stat(samplesDir); os.IsNotExist(err) {
 		return 0, fmt.Errorf("no samples directory found")
@@ -198,12 +191,10 @@ func processPolicy(policyDir, category, policyName, outputDir string, dryRun boo
 		constraintPath := filepath.Join(sampleDir, "constraint.yaml")
 		constraintData, err := os.ReadFile(constraintPath)
 		if err != nil {
-			fmt.Printf("Warning: no constraint.yaml in %s: %v\n", sampleDir, err)
 			continue
 		}
 		policyInfo.ConstraintYAML = string(constraintData)
 
-		// Parse constraint to get the kind
 		var constraint map[string]interface{}
 		if err := yaml.Unmarshal(constraintData, &constraint); err == nil {
 			if kind, ok := constraint["kind"].(string); ok {
@@ -211,13 +202,13 @@ func processPolicy(policyDir, category, policyName, outputDir string, dryRun boo
 			}
 		}
 
-		// Process example_disallowed.yaml - this becomes a "fix" task
+		// Generate task for disallowed (violation) case
 		disallowedPath := filepath.Join(sampleDir, "example_disallowed.yaml")
 		if _, err := os.Stat(disallowedPath); err == nil {
 			disallowedData, err := os.ReadFile(disallowedPath)
 			if err == nil {
-				if err := generateFixTask(policyInfo, disallowedData, outputDir, sample.Name(), dryRun); err != nil {
-					fmt.Printf("Warning: failed to generate fix task for %s: %v\n", sample.Name(), err)
+				if err := generateComplianceCheckTask(policyInfo, disallowedData, false, outputDir, sample.Name(), dryRun); err != nil {
+					fmt.Printf("Warning: failed to generate violation task for %s: %v\n", sample.Name(), err)
 				} else {
 					generated++
 				}
@@ -231,17 +222,14 @@ func processPolicy(policyDir, category, policyName, outputDir string, dryRun boo
 	return generated, nil
 }
 
-func generateFixTask(policyInfo PolicyInfo, resourceYAML []byte, outputDir, sampleName string, dryRun bool) error {
-	// Parse the resource to extract metadata
+func generateComplianceCheckTask(policyInfo PolicyInfo, resourceYAML []byte, isCompliant bool, outputDir, sampleName string, dryRun bool) error {
 	var resource map[string]interface{}
 	if err := yaml.Unmarshal(resourceYAML, &resource); err != nil {
 		return fmt.Errorf("parsing resource: %w", err)
 	}
 
-	// Extract resource info
 	kind := "Pod"
 	name := "unknown"
-	namespace := "default"
 
 	if k, ok := resource["kind"].(string); ok {
 		kind = k
@@ -250,25 +238,18 @@ func generateFixTask(policyInfo PolicyInfo, resourceYAML []byte, outputDir, samp
 		if n, ok := meta["name"].(string); ok {
 			name = n
 		}
-		if ns, ok := meta["namespace"].(string); ok {
-			namespace = ns
-		}
 	}
 
-	// Use a consistent namespace for the task
 	taskNamespace := fmt.Sprintf("gatekeeper-%s", sanitizeName(sampleName))
-
-	// Create task name
-	taskName := fmt.Sprintf("gatekeeper-fix-%s-%s", sanitizeName(policyInfo.Name), sanitizeName(sampleName))
+	taskName := fmt.Sprintf("gatekeeper-check-%s-%s", sanitizeName(policyInfo.Name), sanitizeName(sampleName))
 
 	if dryRun {
 		fmt.Printf("\n--- Would generate: %s ---\n", taskName)
 		fmt.Printf("Policy: %s\n", policyInfo.Name)
-		fmt.Printf("Resource: %s/%s in namespace %s\n", kind, name, taskNamespace)
+		fmt.Printf("Resource: %s/%s (expects violation)\n", kind, name)
 		return nil
 	}
 
-	// Create task directory
 	taskDir := filepath.Join(outputDir, taskName)
 	if err := os.MkdirAll(taskDir, 0755); err != nil {
 		return fmt.Errorf("creating task directory: %w", err)
@@ -276,14 +257,10 @@ func generateFixTask(policyInfo PolicyInfo, resourceYAML []byte, outputDir, samp
 
 	// Update resource namespace
 	resourceYAMLStr := string(resourceYAML)
-	if namespace != taskNamespace {
-		// Simple replacement - might need more sophisticated handling
-		if strings.Contains(resourceYAMLStr, "namespace:") {
-			resourceYAMLStr = regexp.MustCompile(`namespace:\s*\S+`).ReplaceAllString(resourceYAMLStr, "namespace: "+taskNamespace)
-		} else {
-			// Add namespace to metadata
-			resourceYAMLStr = strings.Replace(resourceYAMLStr, "metadata:", "metadata:\n  namespace: "+taskNamespace, 1)
-		}
+	if strings.Contains(resourceYAMLStr, "namespace:") {
+		resourceYAMLStr = regexp.MustCompile(`namespace:\s*\S+`).ReplaceAllString(resourceYAMLStr, "namespace: "+taskNamespace)
+	} else {
+		resourceYAMLStr = strings.Replace(resourceYAMLStr, "metadata:", "metadata:\n  namespace: "+taskNamespace, 1)
 	}
 
 	// Write artifacts
@@ -302,33 +279,32 @@ func generateFixTask(policyInfo PolicyInfo, resourceYAML []byte, outputDir, samp
 		return fmt.Errorf("writing resource.yaml: %w", err)
 	}
 
-	// Generate setup.sh
-	setupScript := generateSetupScript(taskNamespace, kind, name)
+	// Generate scripts
+	setupScript := generateSetupScript(taskNamespace)
 	if err := os.WriteFile(filepath.Join(taskDir, "setup.sh"), []byte(setupScript), 0755); err != nil {
 		return fmt.Errorf("writing setup.sh: %w", err)
 	}
 
-	// Generate verify.sh
-	verifyScript := generateVerifyScript(taskNamespace, kind, name, policyInfo.ConstraintKind)
+	verifyScript := generateVerifyScript(taskNamespace, name, policyInfo.ConstraintKind)
 	if err := os.WriteFile(filepath.Join(taskDir, "verify.sh"), []byte(verifyScript), 0755); err != nil {
 		return fmt.Errorf("writing verify.sh: %w", err)
 	}
 
-	// Generate cleanup.sh
 	cleanupScript := generateCleanupScript(taskNamespace, policyInfo.ConstraintKind)
 	if err := os.WriteFile(filepath.Join(taskDir, "cleanup.sh"), []byte(cleanupScript), 0755); err != nil {
 		return fmt.Errorf("writing cleanup.sh: %w", err)
 	}
 
-	// Generate task.yaml
-	prompt := fmt.Sprintf(`A %s named '%s' in namespace '%s' is violating a Gatekeeper policy.
+	// Generate task.yaml - asking LLM to check for violations
+	prompt := fmt.Sprintf(`Check the resources in namespace '%s' for policy compliance.
 
 **Policy Requirement:**
 %s
 
-Please investigate the policy violation and fix the %s to make it compliant.
-You can use 'kubectl get constraint' to see the constraint and its violations.`,
-		kind, name, taskNamespace, policyInfo.Description, kind)
+List any resources that are violating this policy. For each violation, state the resource name and what specifically violates the policy.
+
+If there are no violations, state that all resources are compliant.`,
+		taskNamespace, policyInfo.Description)
 
 	task := Task{
 		Script: []ScriptStep{
@@ -338,6 +314,9 @@ You can use 'kubectl get constraint' to see the constraint and its violations.`,
 		Verifier:   "verify.sh",
 		Cleanup:    "cleanup.sh",
 		Difficulty: "medium",
+		Expect: []Expect{
+			{Contains: name}, // LLM should mention the violating resource name
+		},
 	}
 
 	taskData, err := yaml.Marshal(task)
@@ -352,7 +331,7 @@ You can use 'kubectl get constraint' to see the constraint and its violations.`,
 	return nil
 }
 
-func generateSetupScript(namespace, kind, name string) string {
+func generateSetupScript(namespace string) string {
 	return fmt.Sprintf(`#!/usr/bin/env bash
 set -e
 
@@ -370,93 +349,72 @@ kubectl create namespace "$NAMESPACE"
 # Apply constraint template
 echo "Applying constraint template..."
 kubectl apply -f "${SCRIPT_DIR}/artifacts/template.yaml"
-
-# Wait for template to be ready
 sleep 2
 
 # Apply constraint
 echo "Applying constraint..."
 kubectl apply -f "${SCRIPT_DIR}/artifacts/constraint.yaml"
-
-# Wait for constraint to be ready
 sleep 2
 
-# Apply the non-compliant resource
-echo "Applying non-compliant resource..."
+# Apply the resource to check
+echo "Applying resource..."
 kubectl apply -f "${SCRIPT_DIR}/artifacts/resource.yaml" 2>/dev/null || true
 
-# Wait for audit to detect the violation
-echo "Waiting for Gatekeeper to audit the resource..."
+# Wait for Gatekeeper audit
+echo "Waiting for Gatekeeper audit..."
 sleep 5
-
-# Trigger audit
 kubectl annotate constraint --all audit.gatekeeper.sh/trigger=manual --overwrite 2>/dev/null || true
 sleep 3
 
-echo "Setup complete. Resource %s/%s should have policy violations."
-`, namespace, kind, name)
+echo "Setup complete. Resources deployed in namespace $NAMESPACE."
+`, namespace)
 }
 
-func generateVerifyScript(namespace, kind, name, constraintKind string) string {
+func generateVerifyScript(namespace, expectedViolation, constraintKind string) string {
 	return fmt.Sprintf(`#!/usr/bin/env bash
 set -e
 
 NAMESPACE="%s"
-KIND="%s"
-NAME="%s"
+EXPECTED_VIOLATION="%s"
 CONSTRAINT_KIND="%s"
-TIMEOUT=60
 
-echo "Verifying that %s/%s is now compliant..."
+echo "Verifying compliance check results..."
 
-# Check the resource exists
-if ! kubectl get "$KIND" "$NAME" -n "$NAMESPACE" &>/dev/null; then
-    echo "FAIL: Resource $KIND/$NAME not found in namespace $NAMESPACE"
-    exit 1
-fi
-
-# Trigger Gatekeeper audit
-echo "Triggering Gatekeeper audit..."
+# Trigger fresh audit
 kubectl annotate constraint --all audit.gatekeeper.sh/trigger=manual --overwrite 2>/dev/null || true
 sleep 5
 
-# Check for violations
-echo "Checking for policy violations..."
+# Get actual violations from Gatekeeper
+VIOLATIONS=$(kubectl get "$CONSTRAINT_KIND" -o jsonpath='{range .items[*]}{.status.violations[*].name}{"\n"}{end}' 2>/dev/null | sort -u | tr '\n' ' ')
 
-# Get violations from the constraint
-VIOLATIONS=$(kubectl get "$CONSTRAINT_KIND" -o jsonpath='{range .items[*]}{.status.violations}{"\n"}{end}' 2>/dev/null || echo "")
+echo "Gatekeeper found violations: $VIOLATIONS"
+echo "Expected violation: $EXPECTED_VIOLATION"
 
-# Check if our resource is in the violations
-if echo "$VIOLATIONS" | grep -q "\"name\":\"$NAME\"" && echo "$VIOLATIONS" | grep -q "\"namespace\":\"$NAMESPACE\""; then
-    echo "FAIL: Resource $KIND/$NAME still has policy violations"
-    echo "Violations found:"
-    kubectl get "$CONSTRAINT_KIND" -o jsonpath='{range .items[*]}{.status.violations}{"\n"}{end}' | grep "$NAME" || true
+# Check if the expected violation is in Gatekeeper's list
+if echo "$VIOLATIONS" | grep -q "$EXPECTED_VIOLATION"; then
+    echo "Gatekeeper confirms '$EXPECTED_VIOLATION' is in violation"
+
+    # Now check if the LLM output mentions this resource
+    # The LLM output is passed via the agent output which we check
+    # For now, we verify Gatekeeper detected the violation
+    # The task framework will check if LLM mentioned the violation
+    exit 0
+else
+    echo "ERROR: Gatekeeper did not detect expected violation '$EXPECTED_VIOLATION'"
     exit 1
 fi
-
-echo "SUCCESS: Resource $KIND/$NAME is compliant with the policy"
-exit 0
-`, namespace, kind, name, constraintKind, kind, name)
+`, namespace, expectedViolation, constraintKind)
 }
 
 func generateCleanupScript(namespace, constraintKind string) string {
 	return fmt.Sprintf(`#!/usr/bin/env bash
-# Cleanup script - remove test resources but keep Gatekeeper installed
 
 NAMESPACE="%s"
 CONSTRAINT_KIND="%s"
 
-echo "Cleaning up test resources..."
-
-# Delete the namespace (removes all resources in it)
+echo "Cleaning up..."
 kubectl delete namespace "$NAMESPACE" --ignore-not-found --wait=false
-
-# Delete the constraint
 kubectl delete "$CONSTRAINT_KIND" --all --ignore-not-found 2>/dev/null || true
-
-# Note: We keep the constraint template and Gatekeeper installed
-# as other tasks may use them
-
 echo "Cleanup complete"
 `, namespace, constraintKind)
 }
