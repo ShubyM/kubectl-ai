@@ -1,0 +1,29 @@
+difficulty: easy
+expect:
+- contains: COMPLIANT
+script:
+- prompt: |-
+    You are a Kubernetes security reviewer checking resources for policy compliance.
+
+    **Policy Requirement:**
+    PersistentVolumeClaims must use allowed storage classes.
+
+    **Resource to Review:**
+    ```yaml
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: allowed-storage-class-pvc
+    spec:
+      accessModes:
+        - ReadWriteOnce
+      volumeMode: Filesystem
+      resources:
+        requests:
+          storage: 8Gi
+      storageClassName: allowed-storage-class
+    ```
+    Does this resource COMPLY with the policy requirement above?
+
+    First, answer with exactly "COMPLIANT" or "NON-COMPLIANT".
+    Then briefly explain your reasoning.

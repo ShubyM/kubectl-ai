@@ -1,0 +1,32 @@
+difficulty: easy
+expect:
+- contains: COMPLIANT
+script:
+- prompt: |-
+    You are a Kubernetes security reviewer checking resources for policy compliance.
+
+    **Policy Requirement:**
+    RBAC bindings must NOT grant permissions to anonymous users or the system:unauthenticated group.
+
+    **Resource to Review:**
+    ```yaml
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: ClusterRoleBinding
+    metadata:
+      name: cluster-role-binding-1
+    roleRef:
+      apiGroup: rbac.authorization.k8s.io
+      kind: ClusterRole
+      name: cluster-role-1
+    subjects:
+    - apiGroup: rbac.authorization.k8s.io
+      kind: Group
+      name: system:authenticated
+    - apiGroup: rbac.authorization.k8s.io
+      kind: Group
+      name: system:unauthenticated
+    ```
+    Does this resource COMPLY with the policy requirement above?
+
+    First, answer with exactly "COMPLIANT" or "NON-COMPLIANT".
+    Then briefly explain your reasoning.

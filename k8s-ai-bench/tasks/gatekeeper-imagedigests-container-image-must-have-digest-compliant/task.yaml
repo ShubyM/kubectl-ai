@@ -1,0 +1,29 @@
+difficulty: easy
+expect:
+- contains: COMPLIANT
+script:
+- prompt: |-
+    You are a Kubernetes security reviewer checking resources for policy compliance.
+
+    **Policy Requirement:**
+    Container images must be specified by digest, not tag.
+
+    **Resource to Review:**
+    ```yaml
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: opa-allowed
+    spec:
+      containers:
+        - name: opa
+          image: openpolicyagent/opa:0.9.2@sha256:04ff8fce2afd1a3bc26260348e5b290e8d945b1fad4b4c16d22834c2f3a1814a
+          args:
+            - "run"
+            - "--server"
+            - "--addr=localhost:8080"
+    ```
+    Does this resource COMPLY with the policy requirement above?
+
+    First, answer with exactly "COMPLIANT" or "NON-COMPLIANT".
+    Then briefly explain your reasoning.

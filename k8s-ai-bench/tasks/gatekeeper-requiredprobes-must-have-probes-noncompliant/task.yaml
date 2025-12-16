@@ -1,0 +1,47 @@
+difficulty: easy
+expect:
+- contains: NON-COMPLIANT
+script:
+- prompt: |-
+    You are a Kubernetes security reviewer checking resources for policy compliance.
+
+    **Policy Requirement:**
+    Containers must define readiness and/or liveness probes.
+
+    **Resource to Review:**
+    ```yaml
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: test-pod1
+    spec:
+      containers:
+      - name: nginx-1
+        image: nginx:1.7.9
+        ports:
+        - containerPort: 80
+        livenessProbe:
+          # tcpSocket:
+          #   port: 80
+          # initialDelaySeconds: 5
+          # periodSeconds: 10
+        volumeMounts:
+        - mountPath: /tmp/cache
+          name: cache-volume
+      - name: tomcat
+        image: tomcat
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          tcpSocket:
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+      volumes:
+      - name: cache-volume
+        emptyDir: {}
+    ```
+    Does this resource COMPLY with the policy requirement above?
+
+    First, answer with exactly "COMPLIANT" or "NON-COMPLIANT".
+    Then briefly explain your reasoning.

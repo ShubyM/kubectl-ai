@@ -1,0 +1,33 @@
+difficulty: easy
+expect:
+- contains: NON-COMPLIANT
+script:
+- prompt: |-
+    You are a Kubernetes security reviewer checking resources for policy compliance.
+
+    **Policy Requirement:**
+    Ingress resources must use HTTPS. TLS must be configured and HTTP must be explicitly disabled.
+
+    **Resource to Review:**
+    ```yaml
+    apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+      name: ingress-demo-disallowed-tls-optional
+    spec:
+      rules:
+        - host: example-host.example.com
+          http:
+            paths:
+            - pathType: Prefix
+              path: "/"
+              backend:
+                service:
+                  name: nginx
+                  port:
+                    number: 80
+    ```
+    Does this resource COMPLY with the policy requirement above?
+
+    First, answer with exactly "COMPLIANT" or "NON-COMPLIANT".
+    Then briefly explain your reasoning.

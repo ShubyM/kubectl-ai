@@ -1,0 +1,34 @@
+difficulty: easy
+expect:
+- contains: NON-COMPLIANT
+script:
+- prompt: |-
+    You are a Kubernetes security reviewer checking resources for policy compliance.
+
+    **Policy Requirement:**
+    Containers must run as a non-root user. The runAsNonRoot field must be true and runAsUser must be set to a non-zero value.
+
+    **Resource to Review:**
+    ```yaml
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: nginx-users-disallowed
+      labels:
+        app: nginx-users
+    spec:
+      securityContext:
+        supplementalGroups:
+          - 250
+        fsGroup: 250
+      containers:
+        - name: nginx
+          image: nginx
+          securityContext:
+            runAsUser: 250
+            runAsGroup: 250
+    ```
+    Does this resource COMPLY with the policy requirement above?
+
+    First, answer with exactly "COMPLIANT" or "NON-COMPLIANT".
+    Then briefly explain your reasoning.

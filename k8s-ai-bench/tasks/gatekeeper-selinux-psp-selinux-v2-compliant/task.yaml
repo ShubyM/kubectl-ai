@@ -1,0 +1,33 @@
+difficulty: easy
+expect:
+- contains: COMPLIANT
+script:
+- prompt: |-
+    You are a Kubernetes security reviewer checking resources for policy compliance.
+
+    **Policy Requirement:**
+    Pods must have appropriate SELinux options configured.
+
+    **Resource to Review:**
+    ```yaml
+    apiVersion: v1
+    kind: Pod
+    metadata:
+        name: nginx-selinux-allowed
+        labels:
+            app: nginx-selinux
+    spec:
+      containers:
+      - name: nginx
+        image: nginx
+        securityContext:
+          seLinuxOptions:
+            level: s0:c123,c456
+            role: object_r
+            type: svirt_sandbox_file_t
+            user: system_u
+    ```
+    Does this resource COMPLY with the policy requirement above?
+
+    First, answer with exactly "COMPLIANT" or "NON-COMPLIANT".
+    Then briefly explain your reasoning.

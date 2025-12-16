@@ -1,0 +1,40 @@
+difficulty: easy
+expect:
+- contains: COMPLIANT
+script:
+- prompt: |-
+    You are a Kubernetes security reviewer checking resources for policy compliance.
+
+    **Policy Requirement:**
+    Only specific volume types are allowed. Pods should not use hostPath or other dangerous volume types.
+
+    **Resource to Review:**
+    ```yaml
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: nginx-volume-types-allowed
+      labels:
+        app: nginx-volume-types
+    spec:
+      containers:
+      - name: nginx
+        image: nginx
+        volumeMounts:
+        - mountPath: /cache
+          name: cache-volume
+      - name: nginx2
+        image: nginx
+        volumeMounts:
+        - mountPath: /cache2
+          name: demo-vol
+      volumes:
+      - name: cache-volume
+        emptyDir: {}
+      - name: demo-vol
+        emptyDir: {}
+    ```
+    Does this resource COMPLY with the policy requirement above?
+
+    First, answer with exactly "COMPLIANT" or "NON-COMPLIANT".
+    Then briefly explain your reasoning.

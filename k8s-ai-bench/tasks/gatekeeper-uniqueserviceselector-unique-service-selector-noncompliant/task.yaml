@@ -1,0 +1,27 @@
+difficulty: easy
+expect:
+- contains: NON-COMPLIANT
+script:
+- prompt: |-
+    You are a Kubernetes security reviewer checking resources for policy compliance.
+
+    **Policy Requirement:**
+    Service selectors must be unique.
+
+    **Resource to Review:**
+    ```yaml
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: gatekeeper-test-service-disallowed
+      namespace: default
+    spec:
+      ports:
+        - port: 443
+      selector:
+        key: value
+    ```
+    Does this resource COMPLY with the policy requirement above?
+
+    First, answer with exactly "COMPLIANT" or "NON-COMPLIANT".
+    Then briefly explain your reasoning.
