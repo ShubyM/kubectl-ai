@@ -39,8 +39,11 @@ type ConstraintTemplate struct {
 // Task represents a k8s-ai-bench task definition
 type Task struct {
 	Script     []ScriptStep `json:"script"`
+	Setup      string       `json:"setup,omitempty"`
+	Verifier   string       `json:"verifier,omitempty"`
+	Cleanup    string       `json:"cleanup,omitempty"`
 	Difficulty string       `json:"difficulty"`
-	Expect     []Expect     `json:"expect"`
+	Expect     []Expect     `json:"expect,omitempty"`
 }
 
 // ScriptStep represents a prompt step in a task
@@ -55,8 +58,11 @@ type Expect struct {
 
 // PolicyInfo contains extracted policy information for task generation
 type PolicyInfo struct {
-	Name        string
-	Category    string
-	Description string
-	Title       string
+	Name           string
+	Category       string
+	Description    string
+	Title          string
+	TemplateYAML   string
+	ConstraintYAML string
+	ConstraintKind string
 }
