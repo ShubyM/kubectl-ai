@@ -28,40 +28,28 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Styles with fixed colors (no terminal queries)
 var (
-	// User bubble - right aligned, blue-ish
-	userBubble = lipgloss.NewStyle().
-			Background(lipgloss.Color("62")).
-			Foreground(lipgloss.Color("230")).
-			Padding(0, 1).
-			MarginLeft(2)
+	// Input box style
+	inputBox = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("62")).
+			Padding(0, 1)
 
-	userLabel = lipgloss.NewStyle().
+	// Status bar style
+	statusBar = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("243"))
+
+	// Message prefixes
+	userStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("62")).
 			Bold(true)
 
-	// AI bubble - left aligned, gray
-	aiBubble = lipgloss.NewStyle().
-			Background(lipgloss.Color("236")).
-			Foreground(lipgloss.Color("252")).
-			Padding(0, 1).
-			MarginRight(2)
-
-	aiLabel = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("252")).
+	aiStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("35")).
 		Bold(true)
 
-	// Tool style - subtle
 	toolStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("243")).
-			Italic(true)
-
-	// Input area
-	inputBorder = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("240")).
-			Padding(0, 1)
+			Foreground(lipgloss.Color("243"))
 )
 
 type TUI struct {
@@ -111,19 +99,15 @@ type model struct {
 	sessionManager *sessions.SessionManager
 	ctx            context.Context
 	sessionID      string
+	modelName      string
 
 	viewport viewport.Model
 	textarea textarea.Model
-	messages []chatMessage
+	messages []string
 
 	width  int
 	height int
 	ready  bool
-}
-
-type chatMessage struct {
-	source  string // "user", "ai", "tool"
-	content string
 }
 
 func newModel(manager *agent.AgentManager, sessionManager *sessions.SessionManager, ctx context.Context) model {
@@ -142,6 +126,7 @@ func newModel(manager *agent.AgentManager, sessionManager *sessions.SessionManag
 		ctx:            ctx,
 		textarea:       ta,
 		viewport:       viewport.New(80, 20),
+		modelName:      "gemini-2.5-pro", // default, will be updated
 	}
 }
 
@@ -160,10 +145,13 @@ func (m model) initSession() tea.Msg {
 	if m.manager != nil {
 		m.manager.GetAgent(m.ctx, session.ID)
 	}
-	return sessionReady(session.ID)
+	return sessionReady{id: session.ID, model: session.ModelID}
 }
 
-type sessionReady string
+type sessionReady struct {
+	id    string
+	model string
+}
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -171,7 +159,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.viewport.Width = msg.Width
-		m.viewport.Height = msg.Height - 5 // room for input box
+		m.viewport.Height = msg.Height - 6 // room for input + status
 		m.textarea.SetWidth(msg.Width - 4)
 		m.ready = true
 		m.updateViewport()
@@ -183,7 +171,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "enter":
 			if val := m.textarea.Value(); val != "" {
-				m.messages = append(m.messages, chatMessage{source: "user", content: val})
+				m.messages = append(m.messages, userStyle.Render("You: ")+val)
 				m.textarea.Reset()
 				m.updateViewport()
 				return m, m.sendMessage(val)
@@ -191,7 +179,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case sessionReady:
-		m.sessionID = string(msg)
+		m.sessionID = msg.id
+		if msg.model != "" {
+			m.modelName = msg.model
+		}
 		return m, nil
 
 	case *api.Message:
@@ -225,52 +216,16 @@ func (m *model) handleMessage(msg *api.Message) {
 	switch msg.Type {
 	case api.MessageTypeText:
 		if msg.Source != api.MessageSourceUser {
-			m.messages = append(m.messages, chatMessage{source: "ai", content: text})
+			m.messages = append(m.messages, aiStyle.Render("AI: ")+text)
 		}
 	case api.MessageTypeToolCallRequest:
-		m.messages = append(m.messages, chatMessage{source: "tool", content: text})
+		m.messages = append(m.messages, toolStyle.Render("› "+text))
 	}
 }
 
 func (m *model) updateViewport() {
-	var rendered []string
-	maxWidth := m.width - 4
-	if maxWidth < 20 {
-		maxWidth = 20
-	}
-	bubbleWidth := maxWidth * 3 / 4 // bubbles take 75% width max
-
-	for _, msg := range m.messages {
-		rendered = append(rendered, m.renderMessage(msg, bubbleWidth, maxWidth))
-	}
-
-	m.viewport.SetContent(strings.Join(rendered, "\n\n"))
+	m.viewport.SetContent(strings.Join(m.messages, "\n\n"))
 	m.viewport.GotoBottom()
-}
-
-func (m model) renderMessage(msg chatMessage, bubbleWidth, totalWidth int) string {
-	// Wrap text to bubble width
-	wrapped := wordWrap(msg.content, bubbleWidth-2)
-
-	switch msg.source {
-	case "user":
-		bubble := userBubble.Width(bubbleWidth).Render(wrapped)
-		// Right align
-		padding := totalWidth - lipgloss.Width(bubble)
-		if padding < 0 {
-			padding = 0
-		}
-		return strings.Repeat(" ", padding) + bubble
-
-	case "ai":
-		return aiBubble.Width(bubbleWidth).Render(wrapped)
-
-	case "tool":
-		return toolStyle.Render("⚡ " + msg.content)
-
-	default:
-		return msg.content
-	}
 }
 
 func (m model) sendMessage(query string) tea.Cmd {
@@ -292,48 +247,17 @@ func (m model) View() string {
 		return ""
 	}
 
-	input := inputBorder.Width(m.width - 2).Render(m.textarea.View())
+	// Status bar at top
+	status := statusBar.Render(fmt.Sprintf("Model: %s", m.modelName))
+
+	// Input box at bottom
+	input := inputBox.Width(m.width - 2).Render(m.textarea.View())
 
 	return lipgloss.JoinVertical(lipgloss.Left,
+		status,
+		"",
 		m.viewport.View(),
 		"",
 		input,
 	)
-}
-
-// wordWrap wraps text to the specified width
-func wordWrap(text string, width int) string {
-	if width <= 0 {
-		return text
-	}
-
-	var result strings.Builder
-	lines := strings.Split(text, "\n")
-
-	for i, line := range lines {
-		if i > 0 {
-			result.WriteString("\n")
-		}
-
-		words := strings.Fields(line)
-		if len(words) == 0 {
-			continue
-		}
-
-		lineLen := 0
-		for j, word := range words {
-			wordLen := len(word)
-			if j > 0 && lineLen+1+wordLen > width {
-				result.WriteString("\n")
-				lineLen = 0
-			} else if j > 0 {
-				result.WriteString(" ")
-				lineLen++
-			}
-			result.WriteString(word)
-			lineLen += wordLen
-		}
-	}
-
-	return result.String()
 }
