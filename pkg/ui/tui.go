@@ -25,7 +25,6 @@ import (
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/agent"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/api"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/sessions"
-	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -35,215 +34,79 @@ import (
 	"k8s.io/klog/v2"
 )
 
-// View represents which panel is currently focused
-type viewState int
-
-const (
-	viewChat viewState = iota
-	viewSidebar
-	viewOptions
-)
-
-// Color palette for a modern, sleek look
+// Minimal color palette - works well on both light and dark terminals
 var (
-	// Primary colors
-	primaryColor   = lipgloss.Color("#7C3AED") // Purple
-	secondaryColor = lipgloss.Color("#10B981") // Green
-	accentColor    = lipgloss.Color("#F59E0B") // Amber
+	subtle    = lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#383838"}
+	highlight = lipgloss.AdaptiveColor{Light: "#874BFD", Dark: "#7C3AED"}
+	special   = lipgloss.AdaptiveColor{Light: "#43BF6D", Dark: "#73F59F"}
+	muted     = lipgloss.AdaptiveColor{Light: "#9B9B9B", Dark: "#626262"}
 
-	// Neutral colors
-	textColor      = lipgloss.Color("#F9FAFB") // Almost white
-	textMutedColor = lipgloss.Color("#9CA3AF") // Gray
-	borderColor    = lipgloss.Color("#4B5563") // Border gray
-	highlightColor = lipgloss.Color("#6366F1") // Indigo
-
-	// Sidebar styles
-	sidebarWidth = 28
-	sidebarStyle = lipgloss.NewStyle().
-			Width(sidebarWidth).
-			BorderStyle(lipgloss.RoundedBorder()).
-			BorderForeground(borderColor).
-			Padding(1, 1)
-
-	sidebarActiveStyle = lipgloss.NewStyle().
-				Width(sidebarWidth).
-				BorderStyle(lipgloss.RoundedBorder()).
-				BorderForeground(primaryColor).
-				Padding(1, 1)
-
-	sidebarTitleStyle = lipgloss.NewStyle().
-				Foreground(primaryColor).
-				Bold(true).
-				Padding(0, 0, 1, 0)
-
-	sessionItemStyle = lipgloss.NewStyle().
-				Foreground(textColor).
-				Padding(0, 1)
-
-	sessionItemSelectedStyle = lipgloss.NewStyle().
-					Foreground(textColor).
-					Background(highlightColor).
-					Bold(true).
-					Padding(0, 1)
-
-	sessionItemActiveStyle = lipgloss.NewStyle().
-				Foreground(secondaryColor).
-				Padding(0, 1)
-
-	// Chat panel styles
-	chatPanelStyle = lipgloss.NewStyle().
-			BorderStyle(lipgloss.RoundedBorder()).
-			BorderForeground(borderColor).
-			Padding(0, 1)
-
-	chatPanelActiveStyle = lipgloss.NewStyle().
-				BorderStyle(lipgloss.RoundedBorder()).
-				BorderForeground(primaryColor).
-				Padding(0, 1)
-
-	// Message styles
-	userMessageStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#60A5FA")). // Blue
-				Bold(true)
-
-	aiMessageStyle = lipgloss.NewStyle().
-			Foreground(secondaryColor).
-			Bold(true)
-
-	systemMessageStyle = lipgloss.NewStyle().
-				Foreground(textMutedColor).
-				Italic(true)
-
-	// Input styles
-	inputStyle = lipgloss.NewStyle().
-			BorderStyle(lipgloss.RoundedBorder()).
-			BorderForeground(borderColor).
-			Padding(0, 1)
-
-	inputActiveStyle = lipgloss.NewStyle().
-				BorderStyle(lipgloss.RoundedBorder()).
-				BorderForeground(primaryColor).
-				Padding(0, 1)
-
-	// Status bar
-	statusBarStyle = lipgloss.NewStyle().
-			Foreground(textMutedColor).
-			Padding(0, 1)
-
-	// Help text
-	helpStyle = lipgloss.NewStyle().
-			Foreground(textMutedColor)
-
-	// Option list styles
-	optionStyle = lipgloss.NewStyle().
-			Foreground(textColor).
+	// Tab styles
+	activeTab = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(highlight).
 			Padding(0, 2)
 
-	optionSelectedStyle = lipgloss.NewStyle().
-				Foreground(textColor).
-				Background(primaryColor).
+	inactiveTab = lipgloss.NewStyle().
+			Foreground(muted).
+			Padding(0, 2)
+
+	newTabStyle = lipgloss.NewStyle().
+			Foreground(special).
+			Padding(0, 1)
+
+	tabBarStyle = lipgloss.NewStyle().
+			BorderStyle(lipgloss.NormalBorder()).
+			BorderBottom(true).
+			BorderForeground(subtle)
+
+	// Message styles
+	userStyle = lipgloss.NewStyle().
+			Foreground(highlight).
+			Bold(true)
+
+	aiStyle = lipgloss.NewStyle().
+		Foreground(special).
+		Bold(true)
+
+	toolStyle = lipgloss.NewStyle().
+			Foreground(muted).
+			Italic(true)
+
+	// Input style
+	inputStyle = lipgloss.NewStyle().
+			BorderStyle(lipgloss.NormalBorder()).
+			BorderTop(true).
+			BorderForeground(subtle)
+
+	// Status bar
+	statusStyle = lipgloss.NewStyle().
+			Foreground(muted).
+			Padding(0, 1)
+
+	// Option styles for choices
+	optionStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.AdaptiveColor{Light: "#333", Dark: "#EEE"}).
+			Padding(0, 2)
+
+	selectedOptionStyle = lipgloss.NewStyle().
 				Bold(true).
+				Foreground(highlight).
 				Padding(0, 2)
-
-	// Spinner
-	spinnerStyle = lipgloss.NewStyle().
-			Foreground(primaryColor)
 )
 
-// Key bindings
-type keyMap struct {
-	Up          key.Binding
-	Down        key.Binding
-	Left        key.Binding
-	Right       key.Binding
-	Tab         key.Binding
-	ShiftTab    key.Binding
-	Enter       key.Binding
-	NewSession  key.Binding
-	DeleteSess  key.Binding
-	Quit        key.Binding
-	Help        key.Binding
-	ScrollUp    key.Binding
-	ScrollDown  key.Binding
-	PageUp      key.Binding
-	PageDown    key.Binding
-}
-
-var keys = keyMap{
-	Up: key.NewBinding(
-		key.WithKeys("up", "k"),
-		key.WithHelp("↑/k", "up"),
-	),
-	Down: key.NewBinding(
-		key.WithKeys("down", "j"),
-		key.WithHelp("↓/j", "down"),
-	),
-	Left: key.NewBinding(
-		key.WithKeys("left", "h"),
-		key.WithHelp("←/h", "left"),
-	),
-	Right: key.NewBinding(
-		key.WithKeys("right", "l"),
-		key.WithHelp("→/l", "right"),
-	),
-	Tab: key.NewBinding(
-		key.WithKeys("tab"),
-		key.WithHelp("tab", "switch panel"),
-	),
-	ShiftTab: key.NewBinding(
-		key.WithKeys("shift+tab"),
-		key.WithHelp("shift+tab", "switch panel"),
-	),
-	Enter: key.NewBinding(
-		key.WithKeys("enter"),
-		key.WithHelp("enter", "send/select"),
-	),
-	NewSession: key.NewBinding(
-		key.WithKeys("ctrl+n"),
-		key.WithHelp("ctrl+n", "new session"),
-	),
-	DeleteSess: key.NewBinding(
-		key.WithKeys("ctrl+d"),
-		key.WithHelp("ctrl+d", "delete session"),
-	),
-	Quit: key.NewBinding(
-		key.WithKeys("ctrl+c", "ctrl+q"),
-		key.WithHelp("ctrl+c", "quit"),
-	),
-	Help: key.NewBinding(
-		key.WithKeys("ctrl+h", "?"),
-		key.WithHelp("?", "help"),
-	),
-	ScrollUp: key.NewBinding(
-		key.WithKeys("ctrl+u"),
-		key.WithHelp("ctrl+u", "scroll up"),
-	),
-	ScrollDown: key.NewBinding(
-		key.WithKeys("ctrl+d"),
-		key.WithHelp("ctrl+d", "scroll down"),
-	),
-	PageUp: key.NewBinding(
-		key.WithKeys("pgup"),
-		key.WithHelp("pgup", "page up"),
-	),
-	PageDown: key.NewBinding(
-		key.WithKeys("pgdown"),
-		key.WithHelp("pgdn", "page down"),
-	),
-}
-
-// Message types for async updates
+// Message types
 type (
-	sessionListMsg      []*api.Session
-	agentOutputMsg      *api.Message
-	sessionSwitchedMsg  string
-	sessionCreatedMsg   *api.Session
-	sessionDeletedMsg   string
-	tickMsg             time.Time
-	errMsg              error
+	sessionListMsg     []*api.Session
+	agentOutputMsg     *api.Message
+	sessionSwitchedMsg string
+	sessionCreatedMsg  *api.Session
+	sessionDeletedMsg  string
+	tickMsg            time.Time
+	errMsg             error
 )
 
-// TUI is the modern terminal user interface with multi-session support
+// TUI is the terminal user interface
 type TUI struct {
 	program        *tea.Program
 	manager        *agent.AgentManager
@@ -251,7 +114,6 @@ type TUI struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
 
-	// For listening to agent outputs
 	outputListeners map[string]context.CancelFunc
 	listenerMu      sync.Mutex
 }
@@ -268,14 +130,9 @@ func NewTUI(manager *agent.AgentManager, sessionManager *sessions.SessionManager
 func (t *TUI) Run(ctx context.Context) error {
 	t.ctx, t.cancel = context.WithCancel(ctx)
 
-	model := newModel(t.manager, t.sessionManager, t.ctx)
-	t.program = tea.NewProgram(
-		model,
-		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
-	)
+	m := newModel(t.manager, t.sessionManager, t.ctx)
+	t.program = tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 
-	// Set up agent created callback
 	if t.manager != nil {
 		t.manager.SetAgentCreatedCallback(func(a *agent.Agent) {
 			t.listenToAgent(a)
@@ -295,11 +152,9 @@ func (t *TUI) listenToAgent(a *agent.Agent) {
 	sessionID := a.Session.ID
 
 	t.listenerMu.Lock()
-	// Cancel existing listener if any
 	if cancel, ok := t.outputListeners[sessionID]; ok {
 		cancel()
 	}
-
 	ctx, cancel := context.WithCancel(t.ctx)
 	t.outputListeners[sessionID] = cancel
 	t.listenerMu.Unlock()
@@ -329,72 +184,57 @@ func (t *TUI) ClearScreen() {
 
 // model is the Bubble Tea model
 type model struct {
-	// Core dependencies
 	manager        *agent.AgentManager
 	sessionManager *sessions.SessionManager
 	ctx            context.Context
 
-	// UI state
-	view           viewState
-	width          int
-	height         int
-	ready          bool
-	showHelp       bool
+	// Dimensions
+	width  int
+	height int
+	ready  bool
 
-	// Session list
-	sessions          []*api.Session
-	selectedSession   int
-	activeSessionID   string
+	// Sessions
+	sessions        []*api.Session
+	activeSessionID string
+	selectedTab     int
 
-	// Chat viewport
-	viewport    viewport.Model
-	messages    []*api.Message
+	// Chat
+	viewport viewport.Model
+	messages []*api.Message
 
 	// Input
-	textarea    textarea.Model
-	inputFocused bool
+	textarea textarea.Model
 
-	// Options (for user choice requests)
-	options         []string
-	selectedOption  int
-	showOptions     bool
+	// Options (for choices)
+	options        []string
+	selectedOption int
+	showOptions    bool
 
-	// Spinner for loading states
-	spinner     spinner.Model
-
-	// Cached markdown renderer
-	mdRenderer  *glamour.TermRenderer
-	mdRendererWidth int
-
-	// Username
-	username string
+	// State
+	spinner    spinner.Model
+	mdRenderer *glamour.TermRenderer
+	username   string
 }
 
 func newModel(manager *agent.AgentManager, sessionManager *sessions.SessionManager, ctx context.Context) model {
-	// Create textarea
 	ta := textarea.New()
-	ta.Placeholder = "Type your message... (Enter to send)"
+	ta.Placeholder = "Type a message..."
 	ta.Focus()
 	ta.CharLimit = 4096
 	ta.ShowLineNumbers = false
-	ta.Prompt = "│ "
-	ta.SetHeight(3)
+	ta.Prompt = "› "
+	ta.SetHeight(2)
 	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()
-	ta.FocusedStyle.Base = lipgloss.NewStyle()
-	ta.BlurredStyle.Base = lipgloss.NewStyle()
 	ta.KeyMap.InsertNewline.SetEnabled(false)
 
-	// Create spinner
 	s := spinner.New()
 	s.Spinner = spinner.Dot
-	s.Style = spinnerStyle
+	s.Style = lipgloss.NewStyle().Foreground(highlight)
 
-	// Create viewport
 	vp := viewport.New(80, 20)
 
-	// Get username
 	username := "You"
-	if u, err := user.Current(); err == nil {
+	if u, err := user.Current(); err == nil && u.Username != "" {
 		username = u.Username
 	}
 
@@ -402,12 +242,10 @@ func newModel(manager *agent.AgentManager, sessionManager *sessions.SessionManag
 		manager:        manager,
 		sessionManager: sessionManager,
 		ctx:            ctx,
-		view:           viewChat,
 		textarea:       ta,
 		viewport:       vp,
 		spinner:        s,
 		username:       username,
-		inputFocused:   true,
 	}
 }
 
@@ -416,14 +254,7 @@ func (m model) Init() tea.Cmd {
 		textarea.Blink,
 		m.spinner.Tick,
 		m.loadSessions,
-		m.tick(),
 	)
-}
-
-func (m model) tick() tea.Cmd {
-	return tea.Tick(time.Second, func(t time.Time) tea.Msg {
-		return tickMsg(t)
-	})
 }
 
 func (m model) loadSessions() tea.Msg {
@@ -449,17 +280,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m = m.updateLayout()
 
 	case tea.KeyMsg:
-		cmd := m.handleKeyPress(msg)
-		if cmd != nil {
-			cmds = append(cmds, cmd)
+		if m.showOptions {
+			return m.handleOptionsKey(msg)
 		}
+		return m.handleKey(msg)
 
 	case sessionListMsg:
 		m.sessions = msg
 		if len(m.sessions) > 0 && m.activeSessionID == "" {
-			// Auto-select first session
 			m.activeSessionID = m.sessions[0].ID
-			cmds = append(cmds, m.switchToSession(m.activeSessionID))
+			cmds = append(cmds, m.switchSession(m.activeSessionID))
 		}
 
 	case agentOutputMsg:
@@ -467,21 +297,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case sessionSwitchedMsg:
 		m.activeSessionID = string(msg)
-		m = m.loadMessagesForSession()
-		m = m.updateViewport()
+		m = m.loadMessages()
+		m = m.refreshViewport()
 
 	case sessionCreatedMsg:
 		m.sessions = append([]*api.Session{msg}, m.sessions...)
 		m.activeSessionID = msg.ID
-		m.selectedSession = 0
+		m.selectedTab = 0
 		m.messages = nil
-		m = m.updateViewport()
+		m = m.refreshViewport()
 
 	case sessionDeletedMsg:
 		m = m.removeSession(string(msg))
-
-	case tickMsg:
-		cmds = append(cmds, m.tick())
 
 	case spinner.TickMsg:
 		var cmd tea.Cmd
@@ -492,130 +319,94 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		klog.Errorf("Error: %v", msg)
 	}
 
-	// Update components based on view
-	if m.view == viewChat && m.inputFocused && !m.showOptions {
-		var cmd tea.Cmd
-		m.textarea, cmd = m.textarea.Update(msg)
-		cmds = append(cmds, cmd)
-	}
+	// Update textarea
+	var cmd tea.Cmd
+	m.textarea, cmd = m.textarea.Update(msg)
+	cmds = append(cmds, cmd)
 
-	if m.view == viewChat && !m.showOptions {
-		var cmd tea.Cmd
-		m.viewport, cmd = m.viewport.Update(msg)
-		cmds = append(cmds, cmd)
-	}
+	// Update viewport
+	m.viewport, cmd = m.viewport.Update(msg)
+	cmds = append(cmds, cmd)
 
 	return m, tea.Batch(cmds...)
 }
 
-func (m model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
-	// Global keys
-	switch {
-	case key.Matches(msg, keys.Quit):
-		return tea.Quit
+func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c", "ctrl+q":
+		return m, tea.Quit
 
-	case key.Matches(msg, keys.Help):
-		m.showHelp = !m.showHelp
-		return nil
+	case "ctrl+n":
+		return m, m.createSession()
 
-	case key.Matches(msg, keys.Tab), key.Matches(msg, keys.ShiftTab):
-		return m.toggleView()
-
-	case key.Matches(msg, keys.NewSession):
-		return m.createNewSession()
-	}
-
-	// View-specific keys
-	switch m.view {
-	case viewSidebar:
-		return m.handleSidebarKey(msg)
-	case viewChat:
-		if m.showOptions {
-			return m.handleOptionsKey(msg)
+	case "ctrl+w":
+		if len(m.sessions) > 1 {
+			return m, m.deleteCurrentSession()
 		}
-		return m.handleChatKey(msg)
-	}
 
-	return nil
-}
-
-func (m *model) toggleView() tea.Cmd {
-	if m.view == viewSidebar {
-		m.view = viewChat
-		m.textarea.Focus()
-		m.inputFocused = true
-	} else {
-		m.view = viewSidebar
-		m.textarea.Blur()
-		m.inputFocused = false
-	}
-	return nil
-}
-
-func (m model) handleSidebarKey(msg tea.KeyMsg) tea.Cmd {
-	switch {
-	case key.Matches(msg, keys.Up):
-		if m.selectedSession > 0 {
-			m.selectedSession--
-		}
-	case key.Matches(msg, keys.Down):
-		if m.selectedSession < len(m.sessions)-1 {
-			m.selectedSession++
-		}
-	case key.Matches(msg, keys.Enter), key.Matches(msg, keys.Right):
-		if len(m.sessions) > 0 {
-			session := m.sessions[m.selectedSession]
-			if session.ID != m.activeSessionID {
-				return m.switchToSession(session.ID)
+	case "ctrl+tab", "tab":
+		// Only switch tabs if not typing
+		if m.textarea.Value() == "" {
+			if len(m.sessions) > 0 {
+				m.selectedTab = (m.selectedTab + 1) % len(m.sessions)
+				if m.sessions[m.selectedTab].ID != m.activeSessionID {
+					return m, m.switchSession(m.sessions[m.selectedTab].ID)
+				}
 			}
-			m.view = viewChat
-			m.textarea.Focus()
-			m.inputFocused = true
 		}
-	case key.Matches(msg, keys.DeleteSess):
-		if len(m.sessions) > 0 {
-			return m.deleteSession(m.sessions[m.selectedSession].ID)
-		}
-	}
-	return nil
-}
 
-func (m model) handleChatKey(msg tea.KeyMsg) tea.Cmd {
-	switch {
-	case key.Matches(msg, keys.Enter):
+	case "ctrl+shift+tab", "shift+tab":
+		if m.textarea.Value() == "" {
+			if len(m.sessions) > 0 {
+				m.selectedTab--
+				if m.selectedTab < 0 {
+					m.selectedTab = len(m.sessions) - 1
+				}
+				if m.sessions[m.selectedTab].ID != m.activeSessionID {
+					return m, m.switchSession(m.sessions[m.selectedTab].ID)
+				}
+			}
+		}
+
+	case "enter":
 		if m.textarea.Value() != "" {
-			return m.sendMessage()
+			return m, m.sendMessage()
 		}
-	case key.Matches(msg, keys.ScrollUp):
-		m.viewport.LineUp(5)
-	case key.Matches(msg, keys.ScrollDown):
-		m.viewport.LineDown(5)
-	case key.Matches(msg, keys.PageUp):
+
+	case "ctrl+l":
+		// Clear viewport scroll to bottom
+		m.viewport.GotoBottom()
+
+	case "pgup":
 		m.viewport.HalfViewUp()
-	case key.Matches(msg, keys.PageDown):
+
+	case "pgdown":
 		m.viewport.HalfViewDown()
-	case key.Matches(msg, keys.Left):
-		m.view = viewSidebar
-		m.textarea.Blur()
-		m.inputFocused = false
 	}
-	return nil
+
+	return m, nil
 }
 
-func (m model) handleOptionsKey(msg tea.KeyMsg) tea.Cmd {
-	switch {
-	case key.Matches(msg, keys.Up):
+func (m model) handleOptionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+
+	case "up", "k":
 		if m.selectedOption > 0 {
 			m.selectedOption--
 		}
-	case key.Matches(msg, keys.Down):
+
+	case "down", "j":
 		if m.selectedOption < len(m.options)-1 {
 			m.selectedOption++
 		}
-	case key.Matches(msg, keys.Enter):
-		return m.selectOption()
+
+	case "enter":
+		return m, m.selectOption()
 	}
-	return nil
+
+	return m, nil
 }
 
 func (m model) sendMessage() tea.Cmd {
@@ -655,7 +446,7 @@ func (m model) selectOption() tea.Cmd {
 	}
 }
 
-func (m model) switchToSession(sessionID string) tea.Cmd {
+func (m model) switchSession(sessionID string) tea.Cmd {
 	return func() tea.Msg {
 		if m.manager != nil {
 			_, err := m.manager.GetAgent(m.ctx, sessionID)
@@ -667,7 +458,7 @@ func (m model) switchToSession(sessionID string) tea.Cmd {
 	}
 }
 
-func (m model) createNewSession() tea.Cmd {
+func (m model) createSession() tea.Cmd {
 	return func() tea.Msg {
 		if m.sessionManager == nil {
 			return nil
@@ -676,17 +467,20 @@ func (m model) createNewSession() tea.Cmd {
 		if err != nil {
 			return errMsg(err)
 		}
-		// Start agent for new session
 		if m.manager != nil {
 			if _, err := m.manager.GetAgent(m.ctx, session.ID); err != nil {
-				klog.Errorf("Failed to start agent for new session: %v", err)
+				klog.Errorf("Failed to start agent: %v", err)
 			}
 		}
 		return sessionCreatedMsg(session)
 	}
 }
 
-func (m model) deleteSession(sessionID string) tea.Cmd {
+func (m model) deleteCurrentSession() tea.Cmd {
+	if len(m.sessions) == 0 {
+		return nil
+	}
+	sessionID := m.sessions[m.selectedTab].ID
 	return func() tea.Msg {
 		if m.manager == nil {
 			return nil
@@ -705,15 +499,14 @@ func (m model) removeSession(sessionID string) model {
 			break
 		}
 	}
-	if m.selectedSession >= len(m.sessions) {
-		m.selectedSession = len(m.sessions) - 1
+	if m.selectedTab >= len(m.sessions) {
+		m.selectedTab = len(m.sessions) - 1
 	}
-	if m.selectedSession < 0 {
-		m.selectedSession = 0
+	if m.selectedTab < 0 {
+		m.selectedTab = 0
 	}
-	// If deleted active session, switch to another
 	if sessionID == m.activeSessionID && len(m.sessions) > 0 {
-		m.activeSessionID = m.sessions[m.selectedSession].ID
+		m.activeSessionID = m.sessions[m.selectedTab].ID
 	}
 	return m
 }
@@ -723,7 +516,6 @@ func (m model) handleAgentOutput(msg *api.Message) model {
 		return m
 	}
 
-	// Check if this is for active session
 	if m.manager != nil && m.activeSessionID != "" {
 		agent, err := m.manager.GetAgent(m.ctx, m.activeSessionID)
 		if err == nil && agent.Session != nil {
@@ -731,7 +523,6 @@ func (m model) handleAgentOutput(msg *api.Message) model {
 		}
 	}
 
-	// Check for choice request
 	if msg.Type == api.MessageTypeUserChoiceRequest {
 		if req, ok := msg.Payload.(*api.UserChoiceRequest); ok {
 			m.options = make([]string, len(req.Options))
@@ -743,11 +534,11 @@ func (m model) handleAgentOutput(msg *api.Message) model {
 		}
 	}
 
-	m = m.updateViewport()
+	m = m.refreshViewport()
 	return m
 }
 
-func (m model) loadMessagesForSession() model {
+func (m model) loadMessages() model {
 	if m.manager == nil || m.activeSessionID == "" {
 		return m
 	}
@@ -765,45 +556,43 @@ func (m model) loadMessagesForSession() model {
 }
 
 func (m model) updateLayout() model {
-	// Calculate dimensions
-	chatWidth := m.width - sidebarWidth - 4 // borders and margins
-	if chatWidth < 40 {
-		chatWidth = 40
-	}
+	// Tab bar: 1 line + border
+	// Status bar: 1 line
+	// Input: 3 lines + border
+	// Remaining: viewport
 
-	inputHeight := 5
+	tabHeight := 2
 	statusHeight := 1
-	chatHeight := m.height - inputHeight - statusHeight - 4 // borders
+	inputHeight := 4
+	viewportHeight := m.height - tabHeight - statusHeight - inputHeight
 
-	// Update viewport
-	m.viewport.Width = chatWidth - 4
-	m.viewport.Height = chatHeight
-
-	// Update textarea
-	m.textarea.SetWidth(chatWidth - 4)
-
-	// Invalidate cached renderer if width changed
-	if m.mdRendererWidth != m.viewport.Width {
-		m.mdRenderer = nil
-		m.mdRendererWidth = m.viewport.Width
+	if viewportHeight < 5 {
+		viewportHeight = 5
 	}
 
-	return m.updateViewport()
+	m.viewport.Width = m.width
+	m.viewport.Height = viewportHeight
+	m.textarea.SetWidth(m.width - 4)
+
+	// Reset renderer on resize
+	m.mdRenderer = nil
+
+	return m.refreshViewport()
 }
 
-func (m model) updateViewport() model {
+func (m model) refreshViewport() model {
 	content := m.renderMessages()
 	m.viewport.SetContent(content)
 	m.viewport.GotoBottom()
 	return m
 }
 
-func (m model) getMarkdownRenderer() *glamour.TermRenderer {
+func (m model) getRenderer() *glamour.TermRenderer {
 	if m.mdRenderer != nil {
 		return m.mdRenderer
 	}
 
-	width := m.viewport.Width - 4
+	width := m.width - 8
 	if width < 40 {
 		width = 40
 	}
@@ -824,14 +613,13 @@ func (m model) renderMessages() string {
 	var sb strings.Builder
 
 	for _, msg := range m.messages {
-		// Skip internal messages
 		if msg.Type == api.MessageTypeUserInputRequest && msg.Payload == ">>>" {
 			continue
 		}
 
-		rendered := m.renderMessage(msg)
-		if rendered != "" {
-			sb.WriteString(rendered)
+		line := m.renderMessage(msg)
+		if line != "" {
+			sb.WriteString(line)
 			sb.WriteString("\n")
 		}
 	}
@@ -845,11 +633,11 @@ func (m model) renderMessage(msg *api.Message) string {
 
 	switch msg.Source {
 	case api.MessageSourceUser:
-		prefix = userMessageStyle.Render(m.username + ": ")
+		prefix = userStyle.Render(m.username) + " "
 	case api.MessageSourceModel, api.MessageSourceAgent:
-		prefix = aiMessageStyle.Render("AI: ")
+		prefix = aiStyle.Render("AI") + " "
 	default:
-		prefix = systemMessageStyle.Render("System: ")
+		prefix = ""
 	}
 
 	switch p := msg.Payload.(type) {
@@ -863,18 +651,16 @@ func (m model) renderMessage(msg *api.Message) string {
 
 	switch msg.Type {
 	case api.MessageTypeToolCallRequest:
-		content = fmt.Sprintf("🔧 Running: `%s`", content)
+		return toolStyle.Render("⚡ " + content)
 	case api.MessageTypeToolCallResponse:
-		return "" // Skip tool responses in main view
+		return ""
 	case api.MessageTypeError:
-		content = fmt.Sprintf("❌ Error: %s", content)
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#FF5555")).Render("✗ " + content)
 	}
 
 	// Render markdown
-	renderer := m.getMarkdownRenderer()
-	if renderer != nil {
-		rendered, err := renderer.Render(content)
-		if err == nil {
+	if renderer := m.getRenderer(); renderer != nil {
+		if rendered, err := renderer.Render(content); err == nil {
 			content = strings.TrimSpace(rendered)
 		}
 	}
@@ -884,157 +670,97 @@ func (m model) renderMessage(msg *api.Message) string {
 
 func (m model) View() string {
 	if !m.ready {
-		return "Loading..."
+		return ""
 	}
 
-	// Build sidebar
-	sidebar := m.renderSidebar()
+	var sections []string
 
-	// Build chat panel
-	chat := m.renderChatPanel()
+	// Tab bar
+	sections = append(sections, m.renderTabs())
 
-	// Combine horizontally
-	main := lipgloss.JoinHorizontal(lipgloss.Top, sidebar, "  ", chat)
-
-	// Add status bar
-	status := m.renderStatusBar()
-
-	return lipgloss.JoinVertical(lipgloss.Left, main, status)
-}
-
-func (m model) renderSidebar() string {
-	var sb strings.Builder
-
-	// Title
-	sb.WriteString(sidebarTitleStyle.Render("📋 Sessions"))
-	sb.WriteString("\n")
-
-	// Session list
-	for i, session := range m.sessions {
-		name := session.Name
-		if len(name) > sidebarWidth-6 {
-			name = name[:sidebarWidth-9] + "..."
-		}
-
-		var style lipgloss.Style
-		if i == m.selectedSession && m.view == viewSidebar {
-			style = sessionItemSelectedStyle
-		} else if session.ID == m.activeSessionID {
-			style = sessionItemActiveStyle
-		} else {
-			style = sessionItemStyle
-		}
-
-		prefix := "  "
-		if session.ID == m.activeSessionID {
-			prefix = "● "
-		}
-
-		sb.WriteString(style.Render(prefix + name))
-		sb.WriteString("\n")
-	}
-
-	// Help text
-	if len(m.sessions) == 0 {
-		sb.WriteString(helpStyle.Render("\n  No sessions yet\n  Press Ctrl+N to create"))
-	}
-
-	// Apply sidebar style
-	style := sidebarStyle
-	if m.view == viewSidebar {
-		style = sidebarActiveStyle
-	}
-
-	return style.Height(m.height - 4).Render(sb.String())
-}
-
-func (m model) renderChatPanel() string {
-	chatWidth := m.width - sidebarWidth - 6
-	if chatWidth < 40 {
-		chatWidth = 40
-	}
-
-	var sb strings.Builder
-
-	// Chat header
-	sessionName := "No session selected"
-	if m.activeSessionID != "" {
-		for _, s := range m.sessions {
-			if s.ID == m.activeSessionID {
-				sessionName = s.Name
-				break
-			}
-		}
-	}
-	header := lipgloss.NewStyle().
-		Foreground(primaryColor).
-		Bold(true).
-		Render("💬 " + sessionName)
-	sb.WriteString(header)
-	sb.WriteString("\n\n")
-
-	// Viewport (messages)
-	sb.WriteString(m.viewport.View())
-	sb.WriteString("\n\n")
+	// Chat viewport
+	sections = append(sections, m.viewport.View())
 
 	// Options or input
 	if m.showOptions {
-		sb.WriteString(m.renderOptions())
+		sections = append(sections, m.renderOptions())
 	} else {
-		// Show agent state indicator
-		if m.activeSessionID != "" && m.manager != nil {
-			if agent, err := m.manager.GetAgent(m.ctx, m.activeSessionID); err == nil && agent.Session != nil {
-				if agent.Session.AgentState == api.AgentStateRunning {
-					sb.WriteString(m.spinner.View() + " Thinking...\n")
-				}
+		sections = append(sections, m.renderInput())
+	}
+
+	// Status bar
+	sections = append(sections, m.renderStatus())
+
+	return lipgloss.JoinVertical(lipgloss.Left, sections...)
+}
+
+func (m model) renderTabs() string {
+	var tabs []string
+
+	for i, session := range m.sessions {
+		name := session.Name
+		if len(name) > 15 {
+			name = name[:12] + "..."
+		}
+
+		if i == m.selectedTab {
+			tabs = append(tabs, activeTab.Render("● "+name))
+		} else {
+			tabs = append(tabs, inactiveTab.Render("○ "+name))
+		}
+	}
+
+	tabs = append(tabs, newTabStyle.Render("[+]"))
+
+	row := lipgloss.JoinHorizontal(lipgloss.Top, tabs...)
+	return tabBarStyle.Width(m.width).Render(row)
+}
+
+func (m model) renderInput() string {
+	// Show spinner if agent is running
+	prefix := ""
+	if m.activeSessionID != "" && m.manager != nil {
+		if agent, err := m.manager.GetAgent(m.ctx, m.activeSessionID); err == nil && agent.Session != nil {
+			if agent.Session.AgentState == api.AgentStateRunning {
+				prefix = m.spinner.View() + " "
 			}
 		}
-
-		inputStyle := inputStyle
-		if m.view == viewChat && m.inputFocused {
-			inputStyle = inputActiveStyle
-		}
-		sb.WriteString(inputStyle.Width(chatWidth - 4).Render(m.textarea.View()))
 	}
 
-	// Apply chat panel style
-	style := chatPanelStyle
-	if m.view == viewChat {
-		style = chatPanelActiveStyle
+	input := m.textarea.View()
+	if prefix != "" {
+		input = prefix + input
 	}
 
-	return style.Width(chatWidth).Height(m.height - 4).Render(sb.String())
+	return inputStyle.Width(m.width).Render(input)
 }
 
 func (m model) renderOptions() string {
 	var sb strings.Builder
-	sb.WriteString(lipgloss.NewStyle().Foreground(accentColor).Bold(true).Render("Choose an option:"))
-	sb.WriteString("\n\n")
+	sb.WriteString("\n")
 
 	for i, opt := range m.options {
 		style := optionStyle
+		marker := "  "
 		if i == m.selectedOption {
-			style = optionSelectedStyle
+			style = selectedOptionStyle
+			marker = "› "
 		}
-		sb.WriteString(style.Render(fmt.Sprintf("%d. %s", i+1, opt)))
+		sb.WriteString(style.Render(marker + opt))
 		sb.WriteString("\n")
 	}
 
-	return sb.String()
+	return inputStyle.Width(m.width).Render(sb.String())
 }
 
-func (m model) renderStatusBar() string {
-	// Left side: help hints
-	left := helpStyle.Render("Tab: switch panel • Ctrl+N: new session • ?: help • Ctrl+C: quit")
+func (m model) renderStatus() string {
+	left := "Tab: switch sessions • Ctrl+N: new • Ctrl+W: close"
+	right := fmt.Sprintf("%d sessions", len(m.sessions))
 
-	// Right side: session count
-	right := helpStyle.Render(fmt.Sprintf("%d sessions", len(m.sessions)))
-
-	// Calculate spacing
-	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 4
-	if gap < 0 {
-		gap = 0
+	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
+	if gap < 1 {
+		gap = 1
 	}
 
-	return statusBarStyle.Width(m.width).Render(left + strings.Repeat(" ", gap) + right)
+	return statusStyle.Render(left + strings.Repeat(" ", gap) + right)
 }
