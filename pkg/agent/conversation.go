@@ -437,6 +437,10 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 				if c.RunOnce {
 					log.Info("RunOnce mode, exiting agent loop")
 					c.setAgentState(api.AgentStateExited)
+					// Send a message to unblock the UI goroutine waiting on Output channel.
+					// Without this, the UI would hang forever since it only checks AgentState
+					// after receiving a message from the Output channel.
+					c.addMessage(api.MessageSourceAgent, api.MessageTypeText, "It has been a pleasure assisting you. Have a great day!")
 					return
 				}
 				log.Info("initiating user input")
