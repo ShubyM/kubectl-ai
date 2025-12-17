@@ -18,9 +18,12 @@ echo "Writing results to ${OUTPUT_DIR}"
 BINDIR="${REPO_ROOT}/.build/bin"
 mkdir -p "${BINDIR}"
 
-curl -sSL https://raw.githubusercontent.com/GoogleCloudPlatform/kubectl-ai/main/install.sh | bash
+# Build kubectl-ai from current checkout
+cd "${REPO_ROOT}"
+go build -o "${BINDIR}/kubectl-ai" ./cmd
 
+# Build k8s-ai-bench from current checkout
 cd "${REPO_ROOT}/k8s-ai-bench"
 go build -o "${BINDIR}/k8s-ai-bench" .
 
-"${BINDIR}/k8s-ai-bench" run --agent-bin kubectl-ai --kubeconfig "${KUBECONFIG:-~/.kube/config}" --output-dir "${OUTPUT_DIR}" ${TEST_ARGS:-}
+"${BINDIR}/k8s-ai-bench" run --agent-bin "${BINDIR}/kubectl-ai" --kubeconfig "${KUBECONFIG:-~/.kube/config}" --output-dir "${OUTPUT_DIR}" ${TEST_ARGS:-}
