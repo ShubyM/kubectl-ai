@@ -25,13 +25,6 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-)
-
-// Simple styles - no color queries
-var (
-	userPrefix = lipgloss.NewStyle().Bold(true).SetString("You: ")
-	aiPrefix   = lipgloss.NewStyle().Bold(true).SetString("AI: ")
 )
 
 type TUI struct {
@@ -53,7 +46,7 @@ func (t *TUI) Run(ctx context.Context) error {
 	t.ctx, t.cancel = context.WithCancel(ctx)
 
 	m := newModel(t.manager, t.sessionManager, t.ctx)
-	t.program = tea.NewProgram(m, tea.WithAltScreen())
+	t.program = tea.NewProgram(m, tea.WithAltScreen(), tea.WithoutCatchPanics())
 
 	// Listen to agent output
 	if t.manager != nil {
@@ -112,7 +105,7 @@ func newModel(manager *agent.AgentManager, sessionManager *sessions.SessionManag
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(textarea.Blink, m.initSession)
+	return m.initSession
 }
 
 func (m model) initSession() tea.Msg {
@@ -132,16 +125,15 @@ func (m model) initSession() tea.Msg {
 type sessionReady string
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmds []tea.Cmd
-
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 		m.viewport.Width = msg.Width
-		m.viewport.Height = msg.Height - 3 // room for input
+		m.viewport.Height = msg.Height - 3
 		m.textarea.SetWidth(msg.Width - 2)
 		m.ready = true
+		return m, nil
 
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -149,7 +141,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "enter":
 			if val := m.textarea.Value(); val != "" {
-				m.messages = append(m.messages, userPrefix.String()+val)
+				m.messages = append(m.messages, "You: "+val)
 				m.textarea.Reset()
 				m.updateViewport()
 				return m, m.sendMessage(val)
@@ -158,20 +150,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case sessionReady:
 		m.sessionID = string(msg)
+		return m, nil
 
 	case *api.Message:
 		m.handleMessage(msg)
 		m.updateViewport()
+		return m, nil
 	}
 
+	// Only update textarea for key events
 	var cmd tea.Cmd
 	m.textarea, cmd = m.textarea.Update(msg)
-	cmds = append(cmds, cmd)
-
-	m.viewport, cmd = m.viewport.Update(msg)
-	cmds = append(cmds, cmd)
-
-	return m, tea.Batch(cmds...)
+	return m, cmd
 }
 
 func (m *model) handleMessage(msg *api.Message) {
@@ -193,13 +183,11 @@ func (m *model) handleMessage(msg *api.Message) {
 
 	switch msg.Type {
 	case api.MessageTypeText:
-		if msg.Source == api.MessageSourceUser {
-			// Already shown
-		} else {
-			m.messages = append(m.messages, aiPrefix.String()+text)
+		if msg.Source != api.MessageSourceUser {
+			m.messages = append(m.messages, "AI: "+text)
 		}
 	case api.MessageTypeToolCallRequest:
-		m.messages = append(m.messages, "→ "+text)
+		m.messages = append(m.messages, "> "+text)
 	}
 }
 
