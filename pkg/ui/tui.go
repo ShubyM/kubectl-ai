@@ -283,7 +283,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.showOptions {
 			return m.handleOptionsKey(msg)
 		}
-		return m.handleKey(msg)
+		// Handle special keys, but let regular typing pass through
+		if cmd := m.handleKey(msg); cmd != nil {
+			return m, cmd
+		}
 
 	case sessionListMsg:
 		m.sessions = msg
@@ -331,50 +334,45 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *model) handleKey(msg tea.KeyMsg) tea.Cmd {
 	switch msg.String() {
 	case "ctrl+c", "ctrl+q":
-		return m, tea.Quit
+		return tea.Quit
 
 	case "ctrl+n":
-		return m, m.createSession()
+		return m.createSession()
 
 	case "ctrl+w":
 		if len(m.sessions) > 1 {
-			return m, m.deleteCurrentSession()
+			return m.deleteCurrentSession()
 		}
 
-	case "ctrl+tab", "tab":
-		// Only switch tabs if not typing
-		if m.textarea.Value() == "" {
-			if len(m.sessions) > 0 {
-				m.selectedTab = (m.selectedTab + 1) % len(m.sessions)
-				if m.sessions[m.selectedTab].ID != m.activeSessionID {
-					return m, m.switchSession(m.sessions[m.selectedTab].ID)
-				}
+	case "ctrl+tab":
+		// Switch tabs
+		if len(m.sessions) > 0 {
+			m.selectedTab = (m.selectedTab + 1) % len(m.sessions)
+			if m.sessions[m.selectedTab].ID != m.activeSessionID {
+				return m.switchSession(m.sessions[m.selectedTab].ID)
 			}
 		}
 
-	case "ctrl+shift+tab", "shift+tab":
-		if m.textarea.Value() == "" {
-			if len(m.sessions) > 0 {
-				m.selectedTab--
-				if m.selectedTab < 0 {
-					m.selectedTab = len(m.sessions) - 1
-				}
-				if m.sessions[m.selectedTab].ID != m.activeSessionID {
-					return m, m.switchSession(m.sessions[m.selectedTab].ID)
-				}
+	case "ctrl+shift+tab":
+		if len(m.sessions) > 0 {
+			m.selectedTab--
+			if m.selectedTab < 0 {
+				m.selectedTab = len(m.sessions) - 1
+			}
+			if m.sessions[m.selectedTab].ID != m.activeSessionID {
+				return m.switchSession(m.sessions[m.selectedTab].ID)
 			}
 		}
 
 	case "enter":
 		if m.textarea.Value() != "" {
-			return m, m.sendMessage()
+			return m.sendMessage()
 		}
 
 	case "ctrl+l":
-		// Clear viewport scroll to bottom
 		m.viewport.GotoBottom()
 
 	case "pgup":
@@ -384,7 +382,8 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.viewport.HalfViewDown()
 	}
 
-	return m, nil
+	// Return nil to let the key pass through to textarea
+	return nil
 }
 
 func (m model) handleOptionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -754,7 +753,7 @@ func (m model) renderOptions() string {
 }
 
 func (m model) renderStatus() string {
-	left := "Tab: switch sessions • Ctrl+N: new • Ctrl+W: close"
+	left := "Ctrl+Tab: switch • Ctrl+N: new • Ctrl+W: close"
 	right := fmt.Sprintf("%d sessions", len(m.sessions))
 
 	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
