@@ -524,7 +524,7 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 			return fmt.Errorf("creating web UI: %w", err)
 		}
 	case ui.UITypeTUI:
-		userInterface = ui.NewTUI(defaultAgent)
+		userInterface = ui.NewTUI(agentManager, sessionManager)
 	default:
 		return fmt.Errorf("ui-type mode %q is not known", opt.UIType)
 	}
