@@ -40,11 +40,8 @@ type ConstraintTemplate struct {
 	APIVersion string `yaml:"apiVersion"`
 	Kind       string `yaml:"kind"`
 	Metadata   struct {
-		Name        string `yaml:"name"`
-		Annotations struct {
-			Description string `yaml:"description"`
-			Metadata    string `yaml:"metadata"`
-		} `yaml:"annotations"`
+		Name        string            `yaml:"name"`
+		Annotations map[string]string `yaml:"annotations"`
 	} `yaml:"metadata"`
 	Spec struct {
 		CRD struct {
@@ -54,13 +51,70 @@ type ConstraintTemplate struct {
 				} `yaml:"names"`
 				Validation struct {
 					OpenAPIV3Schema struct {
-						Type       string                            `yaml:"type"`
-						Properties map[string]map[string]interface{} `yaml:"properties"`
+						Type        string                            `yaml:"type"`
+						Description string                            `yaml:"description"`
+						Properties  map[string]map[string]interface{} `yaml:"properties"`
 					} `yaml:"openAPIV3Schema"`
 				} `yaml:"validation"`
 			} `yaml:"spec"`
 		} `yaml:"crd"`
 	} `yaml:"spec"`
+}
+
+// getTemplateTitle extracts the title from template annotations
+func getTemplateTitle(ct ConstraintTemplate) string {
+	if ct.Metadata.Annotations != nil {
+		if title, ok := ct.Metadata.Annotations["metadata.gatekeeper.sh/title"]; ok {
+			return title
+		}
+	}
+	return ""
+}
+
+// getTemplateDescription extracts the description from template annotations
+func getTemplateDescription(ct ConstraintTemplate) string {
+	if ct.Metadata.Annotations != nil {
+		if desc, ok := ct.Metadata.Annotations["description"]; ok {
+			return desc
+		}
+	}
+	return ""
+}
+
+// extractParameterDescriptions extracts parameter descriptions from the template's OpenAPIV3Schema
+func extractParameterDescriptions(ct ConstraintTemplate) map[string]string {
+	descriptions := make(map[string]string)
+	props := ct.Spec.CRD.Spec.Validation.OpenAPIV3Schema.Properties
+	for name, prop := range props {
+		if desc, ok := prop["description"].(string); ok {
+			descriptions[name] = desc
+		}
+	}
+	return descriptions
+}
+
+// cleanDescription removes URLs and cleans up the description text
+func cleanDescription(desc string) string {
+	// Remove URLs
+	urlRegex := regexp.MustCompile(`https?://[^\s]+`)
+	desc = urlRegex.ReplaceAllString(desc, "")
+
+	// Remove "For more information, see" type phrases
+	phrases := []string{
+		"For more information, see",
+		"See the documentation at",
+		"Corresponds to the",
+	}
+	for _, phrase := range phrases {
+		if idx := strings.Index(desc, phrase); idx != -1 {
+			// Keep text before the phrase
+			desc = strings.TrimSpace(desc[:idx])
+		}
+	}
+
+	// Clean up extra whitespace
+	desc = strings.Join(strings.Fields(desc), " ")
+	return strings.TrimSpace(desc)
 }
 
 // Constraint represents a Gatekeeper constraint instance
@@ -121,15 +175,17 @@ var clusterScopedKinds = map[string]bool{
 
 // BenchmarkTask represents a generated benchmark task
 type BenchmarkTask struct {
-	Name                string
-	Category            string
-	Description         string
-	Message             string
-	Parameters          map[string]interface{}
-	MatchedKinds        []string
-	AllowedResources    []Resource
-	DisallowedResources []Resource
-	HasClusterScoped    bool // true if any resource is cluster-scoped
+	Name                  string
+	Category              string
+	Description           string
+	Title                 string // Human-readable title from metadata
+	Message               string
+	Parameters            map[string]interface{}
+	ParameterDescriptions map[string]string // Descriptions for each parameter
+	MatchedKinds          []string
+	AllowedResources      []Resource
+	DisallowedResources   []Resource
+	HasClusterScoped      bool // true if any resource is cluster-scoped
 }
 
 // isClusterScoped returns true if the given kind is cluster-scoped
@@ -352,17 +408,38 @@ func processConstraint(constraintPath, category, constraintName string) ([]Bench
 		// Check if we have cluster-scoped resources
 		hasClusterScoped := hasClusterScopedResources(deduped)
 
+		// Extract parameter descriptions from the template
+		paramDescriptions := extractParameterDescriptions(ct)
+
+		// Get title - fallback to constraint name if not present
+		title := getTemplateTitle(ct)
+		if title == "" {
+			title = constraintName
+		}
+
+		// Clean up the description - remove URLs and boilerplate
+		description := cleanDescription(getTemplateDescription(ct))
+		// If description is too short after cleaning, use the schema description
+		if len(description) < 20 {
+			schemaDesc := ct.Spec.CRD.Spec.Validation.OpenAPIV3Schema.Description
+			if schemaDesc != "" {
+				description = cleanDescription(schemaDesc)
+			}
+		}
+
 		// Build task
 		task := BenchmarkTask{
-			Name:                fmt.Sprintf("gk-%s-%s", category, sampleEntry.Name()),
-			Category:            category,
-			Description:         ct.Metadata.Annotations.Description,
-			Message:             getConstraintMessage(sample.Constraint),
-			Parameters:          sample.Constraint.Spec.Parameters,
-			MatchedKinds:        getMatchedKinds(sample.Constraint),
-			AllowedResources:    allowedDeduped,
-			DisallowedResources: disallowedDeduped,
-			HasClusterScoped:    hasClusterScoped,
+			Name:                  fmt.Sprintf("gk-%s-%s", category, sampleEntry.Name()),
+			Category:              category,
+			Title:                 title,
+			Description:           description,
+			Message:               getConstraintMessage(sample.Constraint),
+			Parameters:            sample.Constraint.Spec.Parameters,
+			ParameterDescriptions: paramDescriptions,
+			MatchedKinds:          getMatchedKinds(sample.Constraint),
+			AllowedResources:      allowedDeduped,
+			DisallowedResources:   disallowedDeduped,
+			HasClusterScoped:      hasClusterScoped,
 		}
 		tasks = append(tasks, task)
 	}
@@ -788,48 +865,62 @@ func buildPrompt(task BenchmarkTask) string {
 
 	sb.WriteString("You are reviewing Kubernetes resources for policy compliance.\n\n")
 
+	// Add title as header
+	if task.Title != "" {
+		sb.WriteString(fmt.Sprintf("## Policy: %s\n\n", task.Title))
+	}
+
 	// Add constraint description
 	if task.Description != "" {
-		sb.WriteString("## Policy Rule\n")
+		sb.WriteString("**Rule:** ")
 		sb.WriteString(task.Description)
 		sb.WriteString("\n\n")
 	}
 
-	// Add custom message if present
-	if task.Message != "" {
-		sb.WriteString("## Policy Message\n")
-		sb.WriteString(task.Message)
-		sb.WriteString("\n\n")
-	}
-
-	// Add parameters if present
-	if len(task.Parameters) > 0 {
-		sb.WriteString("## Policy Parameters\n")
-		paramsYAML, _ := yaml.Marshal(task.Parameters)
-		sb.WriteString("```yaml\n")
-		sb.WriteString(string(paramsYAML))
-		sb.WriteString("```\n\n")
-	}
-
 	// Add resource kinds being evaluated
 	if len(task.MatchedKinds) > 0 {
-		sb.WriteString("## Applicable Resource Types\n")
-		sb.WriteString("This policy applies to: ")
+		sb.WriteString("**Applies to:** ")
 		sb.WriteString(strings.Join(task.MatchedKinds, ", "))
 		sb.WriteString("\n\n")
 	}
 
-	sb.WriteString("## Task\n")
+	// Add parameters with descriptions if present
+	if len(task.Parameters) > 0 {
+		sb.WriteString("### Configuration\n\n")
+		for paramName, paramValue := range task.Parameters {
+			// Get description for this parameter
+			if desc, ok := task.ParameterDescriptions[paramName]; ok && desc != "" {
+				sb.WriteString(fmt.Sprintf("**%s**: %s\n", paramName, cleanDescription(desc)))
+			} else {
+				sb.WriteString(fmt.Sprintf("**%s**:\n", paramName))
+			}
+			// Format the value
+			valueYAML, _ := yaml.Marshal(paramValue)
+			sb.WriteString("```yaml\n")
+			sb.WriteString(string(valueYAML))
+			sb.WriteString("```\n")
+		}
+		sb.WriteString("\n")
+	}
+
+	// Add custom message if present (often contains the violation message template)
+	if task.Message != "" {
+		sb.WriteString("**Violation message:** ")
+		sb.WriteString(task.Message)
+		sb.WriteString("\n\n")
+	}
+
+	sb.WriteString("## Task\n\n")
 	if task.HasClusterScoped {
 		sb.WriteString("Inspect the cluster-scoped ")
 		sb.WriteString(strings.Join(task.MatchedKinds, "/"))
-		sb.WriteString(" resources and identify which ones violate the policy described above.\n\n")
+		sb.WriteString(" resources and identify which ones violate the policy.\n\n")
 	} else {
 		namespace := strings.ReplaceAll(task.Name, "_", "-")
 		if len(namespace) > 63 {
 			namespace = namespace[:63]
 		}
-		sb.WriteString(fmt.Sprintf("Inspect the resources in the `%s` namespace and identify which ones violate the policy described above.\n\n", namespace))
+		sb.WriteString(fmt.Sprintf("Inspect the resources in the `%s` namespace and identify which ones violate the policy.\n\n", namespace))
 	}
 
 	sb.WriteString("List each violating resource in the format: `Kind/Name` with a brief explanation of why it violates the policy.\n")
