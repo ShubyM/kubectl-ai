@@ -1,0 +1,234 @@
+cleanup: cleanup.sh
+difficulty: medium
+expect:
+- contains: (?i)nginx-deployment-disallowed
+- contains: (?i)nginx-pdb-disallowed
+- contains: (?i)inventory-nginx-pdb-disallowed
+script:
+- prompt: |
+    You are reviewing Kubernetes resources for policy compliance.
+
+    ## Policy Rule
+    Disallow the following scenarios when deploying PodDisruptionBudgets or resources that implement the replica subresource (e.g. Deployment, ReplicationController, ReplicaSet, StatefulSet): 1. Deployment of PodDisruptionBudgets with .spec.maxUnavailable == 0 2. Deployment of PodDisruptionBudgets with .spec.minAvailable == .spec.replicas of the resource with replica subresource This will prevent PodDisruptionBudgets from blocking voluntary disruptions such as node draining.
+    https://kubernetes.io/docs/concepts/workloads/pods/disruptions/
+
+    ## Applicable Resource Types
+    This policy applies to: Deployment, StatefulSet, PodDisruptionBudget, ReplicationController
+
+    ## Resources to Review
+    Below are the Kubernetes resource definitions to analyze:
+
+    ```yaml
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: nginx-deployment-allowed-1
+      namespace: default
+      labels:
+        app: nginx
+    spec:
+      replicas: 3
+      selector:
+        matchLabels:
+          app: nginx
+          example: allowed-deployment-1
+      template:
+        metadata:
+          labels:
+            app: nginx
+            example: allowed-deployment-1
+        spec:
+          containers:
+          - name: nginx
+            image: nginx:1.14.2
+            ports:
+            - containerPort: 80
+    ---
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: nginx-deployment-allowed-2
+      namespace: default
+      labels:
+        app: nginx
+    spec:
+      replicas: 3
+      selector:
+        matchLabels:
+          app: nginx
+          example: allowed-deployment-2
+      template:
+        metadata:
+          labels:
+            app: nginx
+            example: allowed-deployment-2
+        spec:
+          containers:
+          - name: nginx
+            image: nginx:1.14.2
+            ports:
+            - containerPort: 80
+    ---
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: nginx-deployment-allowed-3
+      namespace: default
+      labels:
+        app: nginx
+    spec:
+      replicas: 3
+      selector:
+        matchLabels:
+          app: nginx
+          example: allowed-deployment-3
+      template:
+        metadata:
+          labels:
+            app: nginx
+            example: allowed-deployment-3
+        spec:
+          containers:
+          - name: nginx
+            image: nginx:1.14.2
+            ports:
+            - containerPort: 80
+    ---
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: nginx-deployment-allowed-4
+      namespace: default
+      labels:
+        app: non-matching-nginx
+    spec:
+      replicas: 1
+      selector:
+        matchLabels:
+          app: non-matching-nginx
+          example: allowed-deployment-4
+      template:
+        metadata:
+          labels:
+            app: non-matching-nginx
+            example: allowed-deployment-4
+        spec:
+          containers:
+          - name: nginx
+            image: nginx:1.14.2
+            ports:
+            - containerPort: 80
+    ---
+    apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata:
+      name: nginx-pdb-allowed
+      namespace: default
+    spec:
+      maxUnavailable: 1
+      selector:
+        matchLabels:
+          foo: bar
+    ---
+    apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata:
+      name: inventory-nginx-pdb-allowed-1
+      namespace: default
+    spec:
+      minAvailable: 2
+      selector:
+        matchLabels:
+          app: nginx
+          example: allowed-deployment-1
+    ---
+    apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata:
+      name: inventory-nginx-pdb-allowed-2
+      namespace: default
+    spec:
+      maxUnavailable: 1
+      selector:
+        matchLabels:
+          app: nginx
+          example: allowed-deployment-2
+    ---
+    apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata:
+      name: inventory-nginx-pdb-allowed-3
+      namespace: default
+    spec:
+      minAvailable: 2
+      selector:
+        matchLabels:
+          app: nginx
+    ---
+    apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata:
+      name: inventory-mongo-pdb-allowed-3
+      namespace: default
+    spec:
+      minAvailable: 2
+      selector:
+        matchLabels:
+          app: mongo
+          example: non-matching-deployment-3
+    ---
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: nginx-deployment-disallowed
+      namespace: default
+      labels:
+        app: nginx
+    spec:
+      replicas: 3
+      selector:
+        matchLabels:
+          app: nginx
+          example: disallowed-deployment
+      template:
+        metadata:
+          labels:
+            app: nginx
+            example: disallowed-deployment
+        spec:
+          containers:
+          - name: nginx
+            image: nginx:1.14.2
+            ports:
+            - containerPort: 80
+    ---
+    apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata:
+      name: nginx-pdb-disallowed
+      namespace: default
+    spec:
+      maxUnavailable: 0
+      selector:
+        matchLabels:
+          foo: bar
+    ---
+    apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata:
+      name: inventory-nginx-pdb-disallowed
+      namespace: default
+    spec:
+      minAvailable: 3
+      selector:
+        matchLabels:
+          app: nginx
+          example: disallowed-deployment
+    ```
+
+    ## Task
+    Review the resources above and identify which ones violate the policy.
+
+    List each violating resource in the format: `Kind/Name` with a brief explanation of why it violates the policy.
+    If a resource is compliant, you do not need to list it.
+setup: setup.sh

@@ -1,0 +1,56 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-privileged-allowed
+  labels:
+    app: nginx-privileged
+spec:
+  containers:
+  - name: nginx
+    image: nginx
+    securityContext:
+      privileged: false
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-privileged-allowed-exempt
+  labels:
+    app: nginx-privileged
+spec:
+  containers:
+  - name: nginx
+    image: safeimages.com/nginx
+    securityContext:
+      privileged: true
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-privileged-disallowed
+  labels:
+    app: nginx-privileged
+spec:
+  ephemeralContainers:
+  - name: nginx
+    image: nginx
+    securityContext:
+      privileged: true
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    app: nginx-privileged
+  name: nginx-privileged-disallowed-2
+spec:
+  containers:
+  - image: nginx
+    name: nginx
+    securityContext:
+      privileged: true
+  initContainers:
+  - image: nginx
+    name: nginx-init
+    securityContext:
+      privileged: true

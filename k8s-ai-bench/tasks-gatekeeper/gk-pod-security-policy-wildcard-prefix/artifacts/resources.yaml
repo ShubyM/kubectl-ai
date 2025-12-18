@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-readonlyrootfilesystem-allowed
+  labels:
+    app: nginx-readonlyrootfilesystem
+spec:
+  containers:
+  - name: nginx
+    image: "safe-images.com/nginx"
+    securityContext:
+      readOnlyRootFilesystem: false
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    app: nginx-readonlyrootfilesystem
+  name: nginx-readonlyrootfilesystem-allowed-2
+spec:
+  containers:
+  - image: unsafe-images.com/nginx
+    name: nginx
+    securityContext:
+      readOnlyRootFilesystem: false

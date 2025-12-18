@@ -1,0 +1,4 @@
+Pod/opa-disallowed-ephemeral
+Pod/opa-disallowed-2
+Pod/opa-exempt-allowed
+Pod/opa-disallowed-3

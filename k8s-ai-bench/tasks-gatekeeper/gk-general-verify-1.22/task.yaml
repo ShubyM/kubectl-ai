@@ -1,0 +1,125 @@
+cleanup: cleanup.sh
+difficulty: medium
+expect:
+- contains: (?i)disallowed-ingress
+script:
+- prompt: |
+    You are reviewing Kubernetes resources for policy compliance.
+
+    ## Policy Rule
+    Verifies deprecated Kubernetes APIs to ensure all the API versions are up to date. This template does not apply to audit as audit looks at the resources which are already present in the cluster with non-deprecated API versions.
+
+    ## Policy Parameters
+    ```yaml
+    k8sVersion: 1.22
+    kvs:
+    - deprecatedAPI: admissionregistration.k8s.io/v1beta1
+      kinds:
+      - MutatingWebhookConfiguration
+      - ValidatingWebhookConfiguration
+      targetAPI: admissionregistration.k8s.io/v1
+    - deprecatedAPI: apiextensions.k8s.io/v1beta1
+      kinds:
+      - CustomResourceDefinition
+      targetAPI: apiextensions.k8s.io/v1
+    - deprecatedAPI: apiregistration.k8s.io/v1beta1
+      kinds:
+      - APIService
+      targetAPI: apiregistration.k8s.io/v1
+    - deprecatedAPI: authentication.k8s.io/v1beta1
+      kinds:
+      - TokenReview
+      targetAPI: authentication.k8s.io/v1
+    - deprecatedAPI: authorization.k8s.io/v1beta1
+      kinds:
+      - SubjectAccessReview
+      targetAPI: authorization.k8s.io/v1
+    - deprecatedAPI: certificates.k8s.io/v1beta1
+      kinds:
+      - CertificateSigningRequest
+      targetAPI: certificates.k8s.io/v1
+    - deprecatedAPI: coordination.k8s.io/v1beta1
+      kinds:
+      - Lease
+      targetAPI: coordination.k8s.io/v1
+    - deprecatedAPI: extensions/v1beta1
+      kinds:
+      - Ingress
+      targetAPI: networking.k8s.io/v1
+    - deprecatedAPI: networking.k8s.io/v1beta1
+      kinds:
+      - Ingress
+      - IngressClass
+      targetAPI: networking.k8s.io/v1
+    - deprecatedAPI: rbac.authorization.k8s.io/v1beta1
+      kinds:
+      - ClusterRole
+      - ClusterRoleBinding
+      - Role
+      - RoleBinding
+      targetAPI: rbac.authorization.k8s.io/v1
+    - deprecatedAPI: scheduling.k8s.io/v1beta1
+      kinds:
+      - PriorityClass
+      targetAPI: scheduling.k8s.io/v1
+    - deprecatedAPI: storage.k8s.io/v1beta1
+      kinds:
+      - CSIDriver
+      - CSINode
+      - StorageClass
+      - VolumeAttachment
+      targetAPI: storage.k8s.io/v1
+    ```
+
+    ## Applicable Resource Types
+    This policy applies to: MutatingWebhookConfiguration, ValidatingWebhookConfiguration, CustomResourceDefinition, APIService, TokenReview, SubjectAccessReview, CertificateSigningRequest, Lease, Ingress, IngressClass, ClusterRole, ClusterRoleBinding, Role, RoleBinding, PriorityClass, CSIDriver, CSINode, StorageClass, VolumeAttachment
+
+    ## Resources to Review
+    Below are the Kubernetes resource definitions to analyze:
+
+    ```yaml
+    apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+      name: allowed-ingress
+      annotations:
+        nginx.ingress.kubernetes.io/rewrite-target: /
+    spec:
+      ingressClassName: nginx-example
+      rules:
+      - http:
+          paths:
+          - path: /testpath
+            pathType: Prefix
+            backend:
+              service:
+                name: test
+                port:
+                  number: 80
+    ---
+    apiVersion: networking.k8s.io/v1beta1
+    kind: Ingress
+    metadata:
+      name: disallowed-ingress
+      annotations:
+        nginx.ingress.kubernetes.io/rewrite-target: /
+    spec:
+      ingressClassName: nginx-example
+      rules:
+      - http:
+          paths:
+          - path: /testpath
+            pathType: Prefix
+            backend:
+              service:
+                name: test
+                port:
+                  number: 80
+    ```
+
+    ## Task
+    Review the resources above and identify which ones violate the policy.
+
+    List each violating resource in the format: `Kind/Name` with a brief explanation of why it violates the policy.
+    If a resource is compliant, you do not need to list it.
+setup: setup.sh

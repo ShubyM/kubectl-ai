@@ -1,0 +1,51 @@
+cleanup: cleanup.sh
+difficulty: medium
+expect:
+- contains: (?i)nginx-host-namespace-disallowed
+script:
+- prompt: |
+    You are reviewing Kubernetes resources for policy compliance.
+
+    ## Policy Rule
+    Disallows sharing of host PID and IPC namespaces by pod containers. Corresponds to the `hostPID` and `hostIPC` fields in a PodSecurityPolicy. For more information, see https://kubernetes.io/docs/concepts/policy/pod-security-policy/#host-namespaces
+
+    ## Applicable Resource Types
+    This policy applies to: Pod
+
+    ## Resources to Review
+    Below are the Kubernetes resource definitions to analyze:
+
+    ```yaml
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: nginx-host-namespace-allowed
+      labels:
+        app: nginx-host-namespace
+    spec:
+      hostPID: false
+      hostIPC: false
+      containers:
+      - name: nginx
+        image: nginx
+    ---
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: nginx-host-namespace-disallowed
+      labels:
+        app: nginx-host-namespace
+    spec:
+      hostPID: true
+      hostIPC: true
+      containers:
+      - name: nginx
+        image: nginx
+    ```
+
+    ## Task
+    Review the resources above and identify which ones violate the policy.
+
+    List each violating resource in the format: `Kind/Name` with a brief explanation of why it violates the policy.
+    If a resource is compliant, you do not need to list it.
+setup: setup.sh

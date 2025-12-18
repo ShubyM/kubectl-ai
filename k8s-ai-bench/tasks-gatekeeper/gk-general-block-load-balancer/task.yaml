@@ -1,0 +1,47 @@
+cleanup: cleanup.sh
+difficulty: medium
+expect:
+- contains: (?i)my-service-disallowed
+script:
+- prompt: |
+    You are reviewing Kubernetes resources for policy compliance.
+
+    ## Policy Rule
+    Disallows all Services with type LoadBalancer.
+    https://kubernetes.io/docs/concepts/services-networking/service/#loadbalancer
+
+    ## Applicable Resource Types
+    This policy applies to: Service
+
+    ## Resources to Review
+    Below are the Kubernetes resource definitions to analyze:
+
+    ```yaml
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: my-service-allowed
+    spec:
+      type: ClusterIP
+      ports:
+        - port: 80
+          targetPort: 80
+    ---
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: my-service-disallowed
+    spec:
+      type: LoadBalancer
+      ports:
+        - port: 80
+          targetPort: 80
+          nodePort: 30007
+    ```
+
+    ## Task
+    Review the resources above and identify which ones violate the policy.
+
+    List each violating resource in the format: `Kind/Name` with a brief explanation of why it violates the policy.
+    If a resource is compliant, you do not need to list it.
+setup: setup.sh

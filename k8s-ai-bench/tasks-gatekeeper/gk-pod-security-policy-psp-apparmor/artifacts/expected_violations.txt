@@ -1,0 +1,4 @@
+Pod/nginx-apparmor-disallowed
+Pod/nginx-apparmor-disallowed-2
+Pod/nginx-apparmor-disallowed-3
+Pod/nginx-apparmor-allowed-5

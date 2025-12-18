@@ -1,0 +1,171 @@
+cleanup: cleanup.sh
+difficulty: medium
+expect:
+- contains: (?i)badstorageclass
+- contains: (?i)nostorageclass
+- contains: (?i)badvolumeclaimstorageclass
+- contains: (?i)novolumeclaimstorageclass
+script:
+- prompt: |
+    You are reviewing Kubernetes resources for policy compliance.
+
+    ## Policy Rule
+    Requires storage classes to be specified when used. Only Gatekeeper 3.9+ and non-ephemeral containers are supported.
+
+    ## Policy Parameters
+    ```yaml
+    includeStorageClassesInMessage: true
+    ```
+
+    ## Applicable Resource Types
+    This policy applies to: PersistentVolumeClaim, StatefulSet
+
+    ## Resources to Review
+    Below are the Kubernetes resource definitions to analyze:
+
+    ```yaml
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: ok
+    spec:
+      accessModes:
+        - ReadWriteOnce
+      volumeMode: Filesystem
+      resources:
+        requests:
+          storage: 8Gi
+      storageClassName: somestorageclass
+    ---
+    apiVersion: apps/v1
+    kind: StatefulSet
+    metadata:
+      name: volumeclaimstorageclass
+    spec:
+      selector:
+        matchLabels:
+          app: volumeclaimstorageclass
+      serviceName: volumeclaimstorageclass
+      replicas: 1
+      template:
+        metadata:
+          labels:
+            app: volumeclaimstorageclass
+        spec:
+          containers:
+          - name: main
+            image: registry.k8s.io/nginx-slim:0.8
+            volumeMounts:
+            - name: data
+              mountPath: /usr/share/nginx/html
+      volumeClaimTemplates:
+      - metadata:
+          name: data
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          storageClassName: "somestorageclass"
+          resources:
+            requests:
+              storage: 1Gi
+    ---
+    apiVersion: storage.k8s.io/v1
+    kind: StorageClass
+    metadata:
+      name: somestorageclass
+    provisioner: foo
+    parameters:
+    allowVolumeExpansion: true
+    ---
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: badstorageclass
+    spec:
+      accessModes:
+        - ReadWriteOnce
+      volumeMode: Filesystem
+      resources:
+        requests:
+          storage: 8Gi
+      storageClassName: badstorageclass
+    ---
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: nostorageclass
+    spec:
+      accessModes:
+        - ReadWriteOnce
+      volumeMode: Filesystem
+      resources:
+        requests:
+          storage: 8Gi
+    ---
+    apiVersion: apps/v1
+    kind: StatefulSet
+    metadata:
+      name: badvolumeclaimstorageclass
+    spec:
+      selector:
+        matchLabels:
+          app: badvolumeclaimstorageclass
+      serviceName: badvolumeclaimstorageclass
+      replicas: 1
+      template:
+        metadata:
+          labels:
+            app: badvolumeclaimstorageclass
+        spec:
+          containers:
+          - name: main
+            image: registry.k8s.io/nginx-slim:0.8
+            volumeMounts:
+            - name: data
+              mountPath: /usr/share/nginx/html
+      volumeClaimTemplates:
+      - metadata:
+          name: data
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          storageClassName: "badstorageclass"
+          resources:
+            requests:
+              storage: 1Gi
+    ---
+    apiVersion: apps/v1
+    kind: StatefulSet
+    metadata:
+      name: novolumeclaimstorageclass
+    spec:
+      selector:
+        matchLabels:
+          app: novolumeclaimstorageclass
+      serviceName: novolumeclaimstorageclass
+      replicas: 1
+      template:
+        metadata:
+          labels:
+            app: novolumeclaimstorageclass
+        spec:
+          containers:
+          - name: main
+            image: registry.k8s.io/nginx-slim:0.8
+            volumeMounts:
+            - name: data
+              mountPath: /usr/share/nginx/html
+      volumeClaimTemplates:
+      - metadata:
+          name: data
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 1Gi
+    ```
+
+    ## Task
+    Review the resources above and identify which ones violate the policy.
+
+    List each violating resource in the format: `Kind/Name` with a brief explanation of why it violates the policy.
+    If a resource is compliant, you do not need to list it.
+setup: setup.sh

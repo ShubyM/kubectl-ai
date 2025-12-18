@@ -1,0 +1,6 @@
+Pod/nginx-disallowed
+Pod/nginx-disallowed-2
+Pod/nginx-disallowed-3
+Pod/image-disallowed
+Pod/nginx-disallowed-4
+Pod/registry-repository-disallowed

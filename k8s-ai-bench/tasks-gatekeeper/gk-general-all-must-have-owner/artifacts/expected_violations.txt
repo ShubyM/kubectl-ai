@@ -1,0 +1,2 @@
+Namespace/disallowed-namespace
+Namespace/disallowed-namespace-2

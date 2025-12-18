@@ -1,0 +1,4 @@
+PersistentVolumeClaim/badstorageclass
+PersistentVolumeClaim/nostorageclass
+StatefulSet/badvolumeclaimstorageclass
+StatefulSet/novolumeclaimstorageclass

@@ -1,0 +1,1 @@
+Pod/nginx-privilege-escalation-disallowed

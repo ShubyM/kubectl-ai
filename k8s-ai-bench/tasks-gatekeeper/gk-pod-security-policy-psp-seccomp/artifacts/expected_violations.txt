@@ -1,0 +1,3 @@
+Pod/nginx-seccomp-disallowed-2
+Pod/nginx-seccomp-disallowed-3
+Pod/nginx-seccomp-disallowed2

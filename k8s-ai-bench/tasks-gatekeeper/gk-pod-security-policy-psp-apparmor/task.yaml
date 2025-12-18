@@ -1,0 +1,158 @@
+cleanup: cleanup.sh
+difficulty: medium
+expect:
+- contains: (?i)nginx-apparmor-disallowed
+- contains: (?i)nginx-apparmor-disallowed-2
+- contains: (?i)nginx-apparmor-disallowed-3
+- contains: (?i)nginx-apparmor-allowed-5
+script:
+- prompt: |
+    You are reviewing Kubernetes resources for policy compliance.
+
+    ## Policy Rule
+    Configures an allow-list of AppArmor profiles for use by containers. This corresponds to specific annotations applied to a PodSecurityPolicy. For information on AppArmor, see https://kubernetes.io/docs/tutorials/clusters/apparmor/
+
+    ## Policy Parameters
+    ```yaml
+    allowedProfiles:
+    - localhost/custom
+    ```
+
+    ## Applicable Resource Types
+    This policy applies to: Pod
+
+    ## Resources to Review
+    Below are the Kubernetes resource definitions to analyze:
+
+    ```yaml
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: nginx-apparmor-allowed
+      annotations:
+        # apparmor.security.beta.kubernetes.io/pod: unconfined # runtime/default
+        container.apparmor.security.beta.kubernetes.io/nginx: localhost/custom
+      labels:
+        app: nginx-apparmor
+    spec:
+      containers:
+      - name: nginx
+        image: nginx
+    ---
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      labels:
+        app: nginx-apparmor
+      name: nginx-apparmor-allowed-2
+    spec:
+      containers:
+      - image: nginx
+        name: nginx
+        securityContext:
+          appArmorProfile:
+            localhostProfile: custom
+            type: Localhost
+
+    ---
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      labels:
+        app: nginx-apparmor
+      name: nginx-apparmor-allowed-3
+    spec:
+      containers:
+      - image: nginx
+        name: nginx
+        securityContext:
+          appArmorProfile:
+            localhostProfile: custom
+            type: Localhost
+      securityContext:
+        appArmorProfile:
+          type: Unconfined
+
+    ---
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      labels:
+        app: nginx-apparmor
+      name: nginx-apparmor-allowed-4
+    spec:
+      containers:
+      - image: nginx
+        name: nginx
+      securityContext:
+        appArmorProfile:
+          localhostProfile: custom
+          type: Localhost
+
+    ---
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: nginx-apparmor-disallowed
+      annotations:
+        # apparmor.security.beta.kubernetes.io/pod: unconfined # runtime/default
+        container.apparmor.security.beta.kubernetes.io/nginx: unconfined
+      labels:
+        app: nginx-apparmor
+    spec:
+      ephemeralContainers:
+      - name: nginx
+        image: nginx
+    ---
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      annotations:
+        container.apparmor.security.beta.kubernetes.io/nginx: unconfined
+      labels:
+        app: nginx-apparmor
+      name: nginx-apparmor-disallowed-2
+    spec:
+      containers:
+      - image: nginx
+        name: nginx
+
+    ---
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      labels:
+        app: nginx-apparmor
+      name: nginx-apparmor-disallowed-3
+    spec:
+      containers:
+      - image: nginx
+        name: nginx
+
+    ---
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      labels:
+        app: nginx-apparmor
+      name: nginx-apparmor-allowed-5
+    spec:
+      containers:
+      - image: nginx
+        name: nginx
+        securityContext:
+          appArmorProfile:
+            type: Unconfined
+      securityContext:
+        appArmorProfile:
+          localhostProfile: custom
+          type: Localhost
+
+    ```
+
+    ## Task
+    Review the resources above and identify which ones violate the policy.
+
+    List each violating resource in the format: `Kind/Name` with a brief explanation of why it violates the policy.
+    If a resource is compliant, you do not need to list it.
+setup: setup.sh

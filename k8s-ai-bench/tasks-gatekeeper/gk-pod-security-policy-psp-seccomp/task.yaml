@@ -1,0 +1,122 @@
+cleanup: cleanup.sh
+difficulty: medium
+expect:
+- contains: (?i)nginx-seccomp-disallowed-2
+- contains: (?i)nginx-seccomp-disallowed-3
+- contains: (?i)nginx-seccomp-disallowed2
+script:
+- prompt: |
+    You are reviewing Kubernetes resources for policy compliance.
+
+    ## Policy Rule
+    Controls the seccomp profile used by containers. Corresponds to the `securityContext.seccompProfile` field. Security contexts from the annotation is not considered as Kubernetes no longer reads security contexts from the annotation.
+
+    ## Policy Parameters
+    ```yaml
+    allowedLocalhostFiles:
+    - '*'
+    allowedProfiles:
+    - RuntimeDefault
+    - Localhost
+    exemptImages:
+    - nginx-exempt
+    ```
+
+    ## Applicable Resource Types
+    This policy applies to: Pod
+
+    ## Resources to Review
+    Below are the Kubernetes resource definitions to analyze:
+
+    ```yaml
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: nginx-seccomp-allowed
+      labels:
+        app: nginx-seccomp
+    spec:
+      containers:
+      - name: nginx
+        image: nginx
+        securityContext:
+          seccompProfile:
+            type: RuntimeDefault
+    ---
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: nginx-seccomp-disallowed
+      labels:
+        app: nginx-seccomp
+    spec:
+      containers:
+      - name: nginx
+        image: nginx-exempt
+        securityContext:
+          seccompProfile:
+            type: Unconfined
+    ---
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: nginx-seccomp-allowed-localhost
+      labels:
+        app: nginx-seccomp
+    spec:
+      containers:
+      - name: nginx
+        image: nginx
+        securityContext:
+          seccompProfile:
+            type: Localhost
+            localhostProfile: profile.json
+    ---
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      labels:
+        app: nginx-seccomp
+      name: nginx-seccomp-disallowed-2
+    spec:
+      ephemeralContainers:
+      - image: nginx
+        name: nginx
+
+    ---
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      labels:
+        app: nginx-seccomp
+      name: nginx-seccomp-disallowed-3
+    spec:
+      containers:
+      - image: nginx
+        name: nginx
+        securityContext:
+          seccompProfile:
+            type: Unconfined
+
+    ---
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: nginx-seccomp-disallowed2
+      labels:
+        app: nginx-seccomp
+    spec:
+      securityContext:
+        seccompProfile:
+          type: Unconfined
+      containers:
+      - name: nginx
+        image: nginx
+    ```
+
+    ## Task
+    Review the resources above and identify which ones violate the policy.
+
+    List each violating resource in the format: `Kind/Name` with a brief explanation of why it violates the policy.
+    If a resource is compliant, you do not need to list it.
+setup: setup.sh

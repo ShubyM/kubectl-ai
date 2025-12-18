@@ -1,0 +1,2 @@
+Pod/nginx-selinux-disallowed
+Pod/nginx-selinux-disallowed-2
