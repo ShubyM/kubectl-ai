@@ -18,3 +18,6 @@ trace.log
 
 # Generated benchmark tasks
 tasks-gatekeeper/
+
+# Compiled tools
+tools/gatekeeper-bench-gen/gatekeeper-bench-gen
