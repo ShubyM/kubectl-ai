@@ -1,3 +1,0 @@
-Pod/opa-disallowed
-Pod/opa-disallowed-2
-Pod/opa-disallowed-3

@@ -1,3 +1,0 @@
-Deployment/nginx-deployment-disallowed
-PodDisruptionBudget/nginx-pdb-disallowed
-PodDisruptionBudget/inventory-nginx-pdb-disallowed

@@ -1,4 +1,0 @@
-Pod/kustomize-disallowed
-Pod/kustomize-disallowed-2
-Pod/kustomize-disallowed-3
-Pod/kustomize-disallowed-4

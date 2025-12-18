@@ -1,4 +1,0 @@
-Ingress/ingress-host-disallowed
-Ingress/ingress-host-disallowed2
-Ingress/ingress-host-example
-Ingress/ingress-host-example2

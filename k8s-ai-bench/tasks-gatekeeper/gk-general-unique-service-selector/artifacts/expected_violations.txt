@@ -1,2 +1,0 @@
-Service/gatekeeper-test-service-disallowed-2
-Service/gatekeeper-test-service-example

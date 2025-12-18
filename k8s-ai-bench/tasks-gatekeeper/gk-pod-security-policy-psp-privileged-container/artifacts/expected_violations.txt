@@ -1,2 +1,0 @@
-Pod/nginx-privileged-disallowed
-Pod/nginx-privileged-disallowed-2

@@ -14,4 +14,7 @@ trace.log
 # Go specific
 *.test
 *.out
-/vendor/ 
+/vendor/
+
+# Generated benchmark tasks
+tasks-gatekeeper/

@@ -537,44 +537,141 @@ func generateBenchmark(outputDir string, task BenchmarkTask) error {
 	return nil
 }
 
-// setupTemplate is a minimal setup script since YAML analysis benchmarks
-// include the resource definitions directly in the prompt
-var setupTemplate = template.Must(template.New("setup").Parse(`#!/usr/bin/env bash
-# This benchmark tests YAML analysis for policy compliance.
-# Resources are provided directly in the prompt for analysis.
-# No cluster setup is required.
-echo "Setup complete. This is a YAML analysis benchmark."
+// setupTemplateNamespaced deploys namespaced resources to a dedicated namespace
+var setupTemplateNamespaced = template.Must(template.New("setup-ns").Parse(`#!/usr/bin/env bash
+set -euo pipefail
+
+NAMESPACE="{{.Namespace}}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Cleanup existing namespace if present
+kubectl delete namespace "$NAMESPACE" --ignore-not-found --wait=true 2>/dev/null || true
+
+# Create namespace
+kubectl create namespace "$NAMESPACE"
+
+# Apply resources
+kubectl apply -f "$SCRIPT_DIR/artifacts/resources.yaml" -n "$NAMESPACE"
+
+# Wait for pods to be ready (if any)
+kubectl wait --for=condition=Ready pods --all -n "$NAMESPACE" --timeout=60s 2>/dev/null || true
+
+echo "Setup complete. Resources deployed to namespace $NAMESPACE"
+`))
+
+// setupTemplateClusterScoped deploys cluster-scoped resources directly
+var setupTemplateClusterScoped = template.Must(template.New("setup-cluster").Parse(`#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Cleanup existing resources
+{{range .CleanupCommands}}
+{{.}}
+{{end}}
+
+# Apply resources
+kubectl apply -f "$SCRIPT_DIR/artifacts/resources.yaml"
+
+echo "Setup complete. Cluster-scoped resources deployed."
 `))
 
 func generateSetupScript(taskDir string, task BenchmarkTask) error {
+	namespace := strings.ReplaceAll(task.Name, "_", "-")
+	if len(namespace) > 63 {
+		namespace = namespace[:63]
+	}
+
 	f, err := os.Create(filepath.Join(taskDir, "setup.sh"))
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 
-	if err := setupTemplate.Execute(f, nil); err != nil {
-		return err
+	if task.HasClusterScoped {
+		// For cluster-scoped resources, generate cleanup commands
+		var cleanupCommands []string
+		allResources := append(task.AllowedResources, task.DisallowedResources...)
+		for _, res := range allResources {
+			cleanupCommands = append(cleanupCommands,
+				fmt.Sprintf(`kubectl delete %s %s --ignore-not-found 2>/dev/null || true`, strings.ToLower(res.Kind), res.Name))
+		}
+
+		data := struct {
+			CleanupCommands []string
+		}{
+			CleanupCommands: cleanupCommands,
+		}
+
+		if err := setupTemplateClusterScoped.Execute(f, data); err != nil {
+			return err
+		}
+	} else {
+		data := struct {
+			Namespace string
+		}{
+			Namespace: namespace,
+		}
+
+		if err := setupTemplateNamespaced.Execute(f, data); err != nil {
+			return err
+		}
 	}
 
 	return os.Chmod(filepath.Join(taskDir, "setup.sh"), 0755)
 }
 
-// cleanupTemplate is minimal since no cluster resources are created
-var cleanupTemplate = template.Must(template.New("cleanup").Parse(`#!/usr/bin/env bash
-# No cluster resources to clean up for YAML analysis benchmarks.
-echo "Cleanup complete."
+// cleanupTemplateNamespaced removes the namespace and all resources
+var cleanupTemplateNamespaced = template.Must(template.New("cleanup-ns").Parse(`#!/usr/bin/env bash
+kubectl delete namespace "{{.Namespace}}" --ignore-not-found --wait=false
+`))
+
+// cleanupTemplateClusterScoped removes cluster-scoped resources
+var cleanupTemplateClusterScoped = template.Must(template.New("cleanup-cluster").Parse(`#!/usr/bin/env bash
+{{range .CleanupCommands}}
+{{.}}
+{{end}}
 `))
 
 func generateCleanupScript(taskDir string, task BenchmarkTask) error {
+	namespace := strings.ReplaceAll(task.Name, "_", "-")
+	if len(namespace) > 63 {
+		namespace = namespace[:63]
+	}
+
 	f, err := os.Create(filepath.Join(taskDir, "cleanup.sh"))
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 
-	if err := cleanupTemplate.Execute(f, nil); err != nil {
-		return err
+	if task.HasClusterScoped {
+		var cleanupCommands []string
+		allResources := append(task.AllowedResources, task.DisallowedResources...)
+		for _, res := range allResources {
+			cleanupCommands = append(cleanupCommands,
+				fmt.Sprintf(`kubectl delete %s %s --ignore-not-found 2>/dev/null || true`, strings.ToLower(res.Kind), res.Name))
+		}
+
+		data := struct {
+			CleanupCommands []string
+		}{
+			CleanupCommands: cleanupCommands,
+		}
+
+		if err := cleanupTemplateClusterScoped.Execute(f, data); err != nil {
+			return err
+		}
+	} else {
+		data := struct {
+			Namespace string
+		}{
+			Namespace: namespace,
+		}
+
+		if err := cleanupTemplateNamespaced.Execute(f, data); err != nil {
+			return err
+		}
 	}
 
 	return os.Chmod(filepath.Join(taskDir, "cleanup.sh"), 0755)
@@ -722,22 +819,19 @@ func buildPrompt(task BenchmarkTask) string {
 		sb.WriteString("\n\n")
 	}
 
-	// Add the resources to review
-	sb.WriteString("## Resources to Review\n")
-	sb.WriteString("Below are the Kubernetes resource definitions to analyze:\n\n")
-	sb.WriteString("```yaml\n")
-	allResources := append(task.AllowedResources, task.DisallowedResources...)
-	for i, res := range allResources {
-		if i > 0 {
-			sb.WriteString("---\n")
-		}
-		sb.WriteString(res.Content)
-		sb.WriteString("\n")
-	}
-	sb.WriteString("```\n\n")
-
 	sb.WriteString("## Task\n")
-	sb.WriteString("Review the resources above and identify which ones violate the policy.\n\n")
+	if task.HasClusterScoped {
+		sb.WriteString("Inspect the cluster-scoped ")
+		sb.WriteString(strings.Join(task.MatchedKinds, "/"))
+		sb.WriteString(" resources and identify which ones violate the policy described above.\n\n")
+	} else {
+		namespace := strings.ReplaceAll(task.Name, "_", "-")
+		if len(namespace) > 63 {
+			namespace = namespace[:63]
+		}
+		sb.WriteString(fmt.Sprintf("Inspect the resources in the `%s` namespace and identify which ones violate the policy described above.\n\n", namespace))
+	}
+
 	sb.WriteString("List each violating resource in the format: `Kind/Name` with a brief explanation of why it violates the policy.\n")
 	sb.WriteString("If a resource is compliant, you do not need to list it.\n")
 

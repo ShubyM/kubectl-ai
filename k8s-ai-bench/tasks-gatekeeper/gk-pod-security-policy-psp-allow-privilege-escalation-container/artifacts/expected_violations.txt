@@ -1,2 +1,0 @@
-Pod/nginx-privilege-escalation-disallowed-2
-Pod/nginx-privilege-escalation-disallowed-3

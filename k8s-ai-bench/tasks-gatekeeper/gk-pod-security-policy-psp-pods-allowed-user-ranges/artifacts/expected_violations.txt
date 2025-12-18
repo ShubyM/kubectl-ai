@@ -1,2 +1,0 @@
-Pod/nginx-users-disallowed
-Pod/nginx-users-disallowed-2

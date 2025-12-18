@@ -1,2 +1,0 @@
-Pod/nginx-readonlyrootfilesystem-disallowed-2
-Pod/nginx-readonlyrootfilesystem-disallowed-3

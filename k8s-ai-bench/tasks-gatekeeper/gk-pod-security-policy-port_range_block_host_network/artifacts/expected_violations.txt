@@ -1,2 +1,0 @@
-Pod/nginx-host-networking-hn-ok-bad-port
-Pod/nginx-host-networking-ports-disallowed

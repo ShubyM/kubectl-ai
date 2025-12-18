@@ -1,3 +1,0 @@
-HorizontalPodAutoscaler/nginx-hpa-disallowed-replicas
-HorizontalPodAutoscaler/nginx-hpa-disallowed-replicaspread
-HorizontalPodAutoscaler/nginx-hpa-disallowed-scaletarget
