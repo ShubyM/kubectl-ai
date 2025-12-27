@@ -97,8 +97,12 @@ func TestHandleMetaQuery(t *testing.T) {
 					t.Fatalf("precondition: expected 3 messages before clear, got %d", got)
 				}
 
-				a := &Agent{llmChat: chat}
-				a.Session = &api.Session{ChatMessageStore: store}
+				a := &Agent{
+					AgentSession: AgentSession{
+						Session: &api.Session{ChatMessageStore: store},
+					},
+				}
+				a.llmChat = chat
 
 				return a
 			},
@@ -128,7 +132,7 @@ func TestHandleMetaQuery(t *testing.T) {
 			query:  "model",
 			expect: "Current model is `test-model`",
 			expectations: func(t *testing.T) *Agent {
-				a := &Agent{Model: "test-model"}
+				a := &Agent{AgentConfig: AgentConfig{Model: "test-model"}}
 				a.Session = &api.Session{}
 				return a
 			},
@@ -143,7 +147,7 @@ func TestHandleMetaQuery(t *testing.T) {
 				llm := mocks.NewMockClient(ctrl)
 				llm.EXPECT().ListModels(ctx).Return([]string{"a", "b"}, nil)
 
-				a := &Agent{LLM: llm}
+				a := &Agent{AgentConfig: AgentConfig{LLM: llm}}
 				a.Session = &api.Session{}
 				return a
 			},
@@ -194,7 +198,10 @@ func TestHandleMetaQuery(t *testing.T) {
 				if err != nil {
 					t.Fatalf("creating session: %v", err)
 				}
-				a := &Agent{ChatMessageStore: sess.ChatMessageStore, SessionBackend: "filesystem"}
+				a := &Agent{
+					AgentConfig:  AgentConfig{SessionBackend: "filesystem"},
+					AgentSession: AgentSession{ChatMessageStore: sess.ChatMessageStore},
+				}
 				a.Session = sess
 				return a
 			},
@@ -225,7 +232,7 @@ func TestHandleMetaQuery(t *testing.T) {
 					t.Fatalf("creating session: %v", err)
 				}
 
-				a := &Agent{SessionBackend: "memory"}
+				a := &Agent{AgentConfig: AgentConfig{SessionBackend: "memory"}}
 				a.Session = &api.Session{ChatMessageStore: sessions.NewInMemoryChatStore()}
 				return a
 			},
@@ -271,7 +278,7 @@ func TestAgent_NewSession(t *testing.T) {
 	}
 
 	a := &Agent{
-		SessionBackend: "memory",
+		AgentConfig: AgentConfig{SessionBackend: "memory"},
 	}
 	a.Session = sess1
 
@@ -308,7 +315,7 @@ func TestAgent_LoadSession_ResetsState(t *testing.T) {
 	}
 
 	a := &Agent{
-		SessionBackend: "memory",
+		AgentConfig: AgentConfig{SessionBackend: "memory"},
 	}
 
 	// Load the session
@@ -344,12 +351,15 @@ func TestAgent_Init_CreatesSessionInStore(t *testing.T) {
 	}
 
 	a := &Agent{
-		SessionBackend: "memory",
-		// Init requires these
-		Input:   make(chan any),
-		Output:  make(chan any),
-		LLM:     mockClient,
-		Session: session,
+		AgentConfig: AgentConfig{
+			SessionBackend: "memory",
+			LLM:            mockClient,
+		},
+		AgentIO: AgentIO{
+			Input:  make(chan any),
+			Output: make(chan any),
+		},
+		AgentSession: AgentSession{Session: session},
 	}
 
 	if err := a.Init(context.Background()); err != nil {
@@ -383,11 +393,15 @@ func TestAgent_NewSession_NoDeadlock(t *testing.T) {
 	}
 
 	a := &Agent{
-		SessionBackend: "memory",
-		Input:          make(chan any),
-		Output:         make(chan any),
-		LLM:            mockClient,
-		Session:        session,
+		AgentConfig: AgentConfig{
+			SessionBackend: "memory",
+			LLM:            mockClient,
+		},
+		AgentIO: AgentIO{
+			Input:  make(chan any),
+			Output: make(chan any),
+		},
+		AgentSession: AgentSession{Session: session},
 	}
 
 	// Init

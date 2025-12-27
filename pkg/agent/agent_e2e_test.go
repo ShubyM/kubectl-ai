@@ -145,15 +145,19 @@ func TestAgentEndToEndToolExecution(t *testing.T) {
 	toolset.RegisterTool(tool)
 
 	a := &Agent{
-		ChatMessageStore: store,
-		LLM:              client,
-		Model:            "test-model",
-		Tools:            toolset,
-		MaxIterations:    4,
-		Session: &api.Session{
-			ID:               "test-session",
+		AgentConfig: AgentConfig{
+			LLM:           client,
+			Model:         "test-model",
+			Tools:         toolset,
+			MaxIterations: 4,
+		},
+		AgentSession: AgentSession{
+			Session: &api.Session{
+				ID:               "test-session",
+				ChatMessageStore: store,
+				AgentState:       api.AgentStateIdle,
+			},
 			ChatMessageStore: store,
-			AgentState:       api.AgentStateIdle,
 		},
 	}
 
@@ -254,14 +258,18 @@ func TestAgentEndToEndMetaClear(t *testing.T) {
 	toolset.Init()
 
 	a := &Agent{
-		ChatMessageStore: store,
-		LLM:              client,
-		Model:            "test-model",
-		Tools:            toolset,
-		Session: &api.Session{
-			ID:               "test-session",
+		AgentConfig: AgentConfig{
+			LLM:   client,
+			Model: "test-model",
+			Tools: toolset,
+		},
+		AgentSession: AgentSession{
+			Session: &api.Session{
+				ID:               "test-session",
+				ChatMessageStore: store,
+				AgentState:       api.AgentStateIdle,
+			},
 			ChatMessageStore: store,
-			AgentState:       api.AgentStateIdle,
 		},
 	}
 
