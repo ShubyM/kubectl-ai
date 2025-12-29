@@ -21,13 +21,14 @@ import (
 	"os"
 	"os/user"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/agent"
 	"github.com/GoogleCloudPlatform/kubectl-ai/pkg/api"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
@@ -35,22 +36,84 @@ import (
 	"k8s.io/klog/v2"
 )
 
-const listHeight = 5
+// ASCII Art Logo
 
+const logo = `
+ _          _               _   _             _ 
+| | ___   _| |__   ___  ___| |_| |       __ _(_)
+| |/ / | | | '_ \ / _ \/ __| __| |_____ / _  | |
+|   <| |_| | |_) |  __/ (__| |_| |_____| (_| | |
+|_|\_\\__,_|_.__/ \___|\___|\__|_|      \__,_|_|
+                                                
+`
+
+// Color palette - Google Material Design colors
 var (
-	spinnerStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("63"))
-	helpStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Margin(1, 0)
-	dotStyle          = helpStyle.UnsetMargins()
-	durationStyle     = dotStyle
-	appStyle          = lipgloss.NewStyle().Margin(1, 2, 0, 2)
-	titleStyle        = lipgloss.NewStyle().MarginLeft(2)
-	listStyle         = lipgloss.NewStyle().MarginBottom(2)
-	itemStyle         = lipgloss.NewStyle().PaddingLeft(4)
-	selectedItemStyle = lipgloss.NewStyle().PaddingLeft(2).Foreground(lipgloss.Color("170"))
-	paginationStyle   = list.DefaultStyles().PaginationStyle.PaddingLeft(4)
-	quitTextStyle     = lipgloss.NewStyle().Margin(1, 0, 2, 4)
+	colorPrimary   = lipgloss.Color("#8AB4F8") // Blue 200
+	colorSecondary = lipgloss.Color("#81C995") // Green 200
+	colorSuccess   = lipgloss.Color("#81C995") // Green 200
+	colorError     = lipgloss.Color("#F28B82") // Red 200
+	colorWarning   = lipgloss.Color("#FDD663") // Yellow 200
+	colorText      = lipgloss.Color("#E8EAED") // Grey 200
+	colorTextMuted = lipgloss.Color("#9AA0A6") // Grey 500
+	colorTextDim   = lipgloss.Color("#5F6368") // Grey 700
+	colorBgSubtle  = lipgloss.Color("#303134") // Surface variant
+	colorBgCode    = lipgloss.Color("#1E1E1E") // Code background
 )
 
+// Pre-built styles (created once, reused)
+var (
+	statusBarStyle    = lipgloss.NewStyle().Background(colorBgSubtle).Foreground(colorText)
+	statusItemStyle   = lipgloss.NewStyle().Foreground(colorTextMuted)
+	statusActiveStyle = lipgloss.NewStyle().Foreground(colorSuccess).Bold(true)
+
+	userMessageStyle = lipgloss.NewStyle().
+				BorderLeft(true).
+				BorderStyle(lipgloss.ThickBorder()).
+				BorderForeground(colorPrimary).
+				PaddingLeft(1).
+				MarginBottom(1)
+
+	agentMessageStyle = lipgloss.NewStyle().
+				BorderLeft(true).
+				BorderStyle(lipgloss.ThickBorder()).
+				BorderForeground(colorSecondary).
+				PaddingLeft(1).
+				MarginBottom(1)
+
+	userLabelStyle  = lipgloss.NewStyle().Foreground(colorPrimary).Bold(true)
+	agentLabelStyle = lipgloss.NewStyle().Foreground(colorSecondary).Bold(true)
+	timestampStyle  = lipgloss.NewStyle().Foreground(colorTextDim).Italic(true)
+
+	toolBoxStyle     = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorSecondary).Padding(0, 1).MarginBottom(1)
+	toolIconStyle    = lipgloss.NewStyle().Foreground(colorSecondary).Bold(true)
+	toolCommandStyle = lipgloss.NewStyle().Foreground(colorText).Background(colorBgCode).Padding(0, 1)
+
+	errorBoxStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorError).Padding(0, 1).MarginBottom(1)
+	errorStyle    = lipgloss.NewStyle().Foreground(colorError).Bold(true)
+
+	inputBoxStyle    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorPrimary).Padding(0, 1)
+	inputBoxDimStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorTextDim).Padding(0, 1)
+
+	spinnerStyle = lipgloss.NewStyle().Foreground(colorPrimary)
+	helpStyle    = lipgloss.NewStyle().Foreground(colorTextDim)
+
+	// Status bar styles (cached to avoid allocation on every frame)
+	statusSepStyle       = lipgloss.NewStyle().Foreground(colorTextDim)
+	statusAppStyle       = lipgloss.NewStyle().Foreground(colorPrimary).Bold(true)
+	statusSessionStyle   = lipgloss.NewStyle().Foreground(colorTextMuted)
+	statusModelStyle     = lipgloss.NewStyle().Foreground(colorSecondary)
+	statusContextError   = lipgloss.NewStyle().Foreground(colorError)
+	statusContextWarning = lipgloss.NewStyle().Foreground(colorWarning)
+	dividerStyle = lipgloss.NewStyle().Foreground(colorTextDim)
+	logoStyle    = lipgloss.NewStyle().Foreground(colorPrimary).Bold(true)
+
+	listTitleStyle    = lipgloss.NewStyle().Foreground(colorWarning).Bold(true).Padding(0, 0, 1, 0)
+	listItemStyle     = lipgloss.NewStyle().Foreground(colorTextMuted).PaddingLeft(2)
+	listSelectedStyle = lipgloss.NewStyle().Foreground(colorPrimary).Bold(true).PaddingLeft(0)
+)
+
+// item represents a choice in the list
 type item string
 
 func (i item) FilterValue() string { return "" }
@@ -65,32 +128,28 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	if !ok {
 		return
 	}
-
-	str := fmt.Sprintf("%d. %s", index+1, i)
-
-	fn := itemStyle.Render
+	str := string(i)
 	if index == m.Index() {
-		fn = func(s ...string) string {
-			return selectedItemStyle.Render("> " + strings.Join(s, " "))
-		}
+		fmt.Fprint(w, listSelectedStyle.Render("> "+str))
+	} else {
+		fmt.Fprint(w, listItemStyle.Render("  "+str))
 	}
-
-	fmt.Fprint(w, fn(str))
 }
 
-const gap = "\n\n"
+var cachedUsername string
+var usernameOnce sync.Once
 
-// getCurrentUsername returns the current user's username, caching it to avoid repeated calls
 func getCurrentUsername() string {
-	currentUser, err := user.Current()
-	if err != nil {
-		// Fallback to environment variable or default
-		if username := os.Getenv("USER"); username != "" {
-			return username
+	usernameOnce.Do(func() {
+		if u, err := user.Current(); err == nil {
+			cachedUsername = u.Username
+		} else if username := os.Getenv("USER"); username != "" {
+			cachedUsername = username
+		} else {
+			cachedUsername = "You"
 		}
-		return "You"
-	}
-	return currentUser.Username
+	})
+	return cachedUsername
 }
 
 // TUI is a rich terminal user interface for the agent.
@@ -101,12 +160,24 @@ type TUI struct {
 
 func NewTUI(agent *agent.Agent) *TUI {
 	return &TUI{
-		program: tea.NewProgram(newModel(agent), tea.WithAltScreen()),
+		program: tea.NewProgram(newModel(agent), tea.WithAltScreen(), tea.WithMouseAllMotion()),
 		agent:   agent,
 	}
 }
 
 func (u *TUI) Run(ctx context.Context) error {
+	// Suppress stderr to prevent klog from breaking TUI
+	originalStderr := os.Stderr
+	if devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0); err == nil {
+		os.Stderr = devNull
+		defer func() {
+			os.Stderr = originalStderr
+			devNull.Close()
+		}()
+	}
+	klog.SetOutput(io.Discard)
+	klog.LogToStderr(false)
+
 	go func() {
 		for {
 			select {
@@ -125,259 +196,768 @@ func (u *TUI) Run(ctx context.Context) error {
 	return err
 }
 
-func (u *TUI) ClearScreen() {
+func (u *TUI) ClearScreen() {}
+
+type tickMsg time.Time
+
+// renderCache holds cached rendered messages
+type renderCache struct {
+	mu       sync.RWMutex
+	cache    map[string]string
+	width    int
+	renderer *glamour.TermRenderer
 }
 
-type resultMsg struct {
-	duration time.Duration
-	food     string
+func newRenderCache() *renderCache {
+	return &renderCache{cache: make(map[string]string)}
 }
 
-func (r resultMsg) String() string {
-	if r.duration == 0 {
-		return dotStyle.Render(strings.Repeat(".", 30))
+func (rc *renderCache) get(id string) (string, bool) {
+	rc.mu.RLock()
+	defer rc.mu.RUnlock()
+	content, ok := rc.cache[id]
+	return content, ok
+}
+
+func (rc *renderCache) set(id string, content string) {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	rc.cache[id] = content
+}
+
+func (rc *renderCache) getRenderer(width int) (*glamour.TermRenderer, error) {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+
+	if rc.width != width {
+		rc.cache = make(map[string]string)
+		rc.width = width
+		rc.renderer = nil
 	}
-	return fmt.Sprintf("🍔 Ate %s %s", r.food,
-		durationStyle.Render(r.duration.String()))
-}
 
-type (
-	errMsg error
-)
+	if rc.renderer == nil {
+		var err error
+		rc.renderer, err = glamour.NewTermRenderer(
+			glamour.WithStylePath("dark"),
+			glamour.WithWordWrap(width),
+		)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return rc.renderer, nil
+}
 
 type model struct {
 	viewport    viewport.Model
-	textarea    textarea.Model
-	senderStyle lipgloss.Style
-	err         error
+	textinput   textinput.Model
+	spinner     spinner.Model
+	list        list.Model
+	agent       *agent.Agent
+	messages    []*api.Message
+	renderCache *renderCache
 
-	agent    *agent.Agent
-	spinner  spinner.Model
-	results  []resultMsg
-	messages []*api.Message
-	quitting bool
+	// Cached values to avoid repeated calls
+	cachedState   api.AgentState
+	cachedSession *api.Session
 
-	list     list.Model
-	choice   string
-	username string // cached username
+	quitting      bool
+	width, height int
+	thinkingStart time.Time
+	startTime     time.Time
+
+	// Pre-rendered content cache
+	viewportContent   string
+	viewportDirty     bool
+	lastRenderedWidth int
+
+	// Session picker state
+	showSessionPicker   bool
+	sessionPickerItems  []api.SessionInfo
+	sessionPickerIndex  int
 }
 
 func newModel(agent *agent.Agent) model {
-	ta := textarea.New()
-	ta.Placeholder = "Send a message..."
-	ta.Focus()
+	ti := textinput.New()
+	ti.Placeholder = "Ask kubectl-ai anything..."
+	ti.Focus()
+	ti.Prompt = ""
+	ti.CharLimit = 4096
+	ti.Width = 80
+	ti.TextStyle = lipgloss.NewStyle().Foreground(colorText)
+	ti.PlaceholderStyle = lipgloss.NewStyle().Foreground(colorTextDim)
+	ti.Cursor.Style = lipgloss.NewStyle().Foreground(colorPrimary)
 
-	ta.Prompt = "┃ "
-	ta.CharLimit = 280
+	sp := spinner.New()
+	sp.Spinner = spinner.MiniDot
+	sp.Style = spinnerStyle
 
-	ta.SetWidth(30)
-	ta.SetHeight(5)
-
-	// Remove cursor line styling
-	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()
-
-	ta.ShowLineNumbers = false
-
-	items := []list.Item{
-		item("Yes"),
-		item("Yes, and don't ask me again"),
-		item("No"),
-	}
-
-	const defaultWidth = 30
-
-	l := list.New(items, itemDelegate{}, defaultWidth, listHeight)
-	l.Title = "Do you want to proceed ?"
+	l := list.New([]list.Item{}, itemDelegate{}, 40, 5)
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(false)
 	l.SetShowHelp(false)
 	l.SetShowPagination(false)
-	l.Styles.Title = titleStyle
+	l.SetShowTitle(false)
 
-	vp := viewport.New(30, 5)
-	vp.SetContent(`Welcome to the chat room!
-Type a message and press Enter to send.`)
-
-	ta.KeyMap.InsertNewline.SetEnabled(false)
+	vp := viewport.New(80, 20)
+	vp.MouseWheelEnabled = true
 
 	return model{
-		agent:    agent,
-		textarea: ta,
-		viewport: vp,
-		list:     l,
-		// a lipgloss style for the sender
-		senderStyle: lipgloss.NewStyle().Foreground(lipgloss.Color("5")),
-		username:    getCurrentUsername(),
-		err:         nil,
+		agent:         agent,
+		textinput:     ti,
+		viewport:      vp,
+		spinner:       sp,
+		list:          l,
+		renderCache:   newRenderCache(),
+		cachedState:   api.AgentStateIdle,
+		startTime:     time.Now(),
+		viewportDirty: true,
 	}
 }
 
 func (m model) Init() tea.Cmd {
-	return textarea.Blink
+	return tea.Batch(textinput.Blink, m.spinner.Tick, m.tickCmd())
+}
+
+func (m model) tickCmd() tea.Cmd {
+	return tea.Tick(time.Second, func(t time.Time) tea.Msg {
+		return tickMsg(t)
+	})
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-
-	var (
-		tiCmd   tea.Cmd
-		vpCmd   tea.Cmd
-		listCmd tea.Cmd
-	)
-
-	m.textarea, tiCmd = m.textarea.Update(msg)
-	m.viewport, vpCmd = m.viewport.Update(msg)
-	m.list, listCmd = m.list.Update(msg)
-
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.viewport.Width = msg.Width
-		m.textarea.SetWidth(msg.Width)
-		if m.agent.GetSession().AgentState == api.AgentStateWaitingForInput {
-			m.list.SetWidth(msg.Width)
-			// m.viewport.Height = msg.Height - m.list.Height() - lipgloss.Height(gap)
-			// TODO: keeping the height of the viewport the same as the height of the textarea for now to avoid jerky UI
-			m.viewport.Height = msg.Height - m.textarea.Height() - lipgloss.Height(gap)
-		} else {
-			m.viewport.Height = msg.Height - m.textarea.Height() - lipgloss.Height(gap)
-		}
-		if len(m.renderedMessages()) > 0 {
-			// Wrap content before setting it.
-			m.viewport.SetContent(lipgloss.NewStyle().Width(m.viewport.Width).Render(strings.Join(m.renderedMessages(), "\n")))
-		}
-		m.viewport.GotoBottom()
+		m.width = msg.Width
+		m.height = msg.Height
+		m.viewportDirty = true
+		return m.handleResize(), nil
+
 	case tea.KeyMsg:
-		switch msg.Type {
-		case tea.KeyCtrlC, tea.KeyEsc, tea.KeyCtrlD:
-			return m, tea.Quit
-		case tea.KeyEnter:
-			if m.agent.GetSession().AgentState == api.AgentStateWaitingForInput {
-				i, ok := m.list.SelectedItem().(item)
-				if ok {
-					m.choice = string(i)
-					choiceIndex := m.list.Index()
-					m.agent.Input <- &api.UserChoiceResponse{Choice: choiceIndex + 1}
-				}
-				return m, nil
-			}
+		return m.handleKeypress(msg)
 
-			m.messages = append(m.messages, &api.Message{
-				Source:  api.MessageSourceUser,
-				Type:    api.MessageTypeText,
-				Payload: m.textarea.Value(),
-			})
-			m.viewport.SetContent(strings.Join(m.renderedMessages(), "\n"))
-			m.agent.Input <- &api.UserInputResponse{Query: m.textarea.Value()}
-			m.textarea.Reset()
-			m.viewport.GotoBottom()
+	case tea.MouseMsg:
+		// Only handle wheel events
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			m.viewport.ScrollUp(3)
+			return m, nil
+		case tea.MouseButtonWheelDown:
+			m.viewport.ScrollDown(3)
+			return m, nil
 		}
-	case *api.Message:
-		m.messages = m.agent.GetSession().AllMessages()
-		m.viewport.SetContent(strings.Join(m.renderedMessages(), "\n"))
-		m.viewport.GotoBottom()
+		return m, nil
 
-	// We handle errors just like any other message
-	case errMsg:
-		m.err = msg
+	case *api.Message:
+		return m.handleMessage(msg)
+
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
+
+	case tickMsg:
+		// Only tick if we're in a state that needs time updates
+		if m.cachedState == api.AgentStateRunning || m.cachedState == api.AgentStateInitializing {
+			return m, m.tickCmd()
+		}
+		return m, m.tickCmd()
+	}
+
+	return m, nil
+}
+
+func (m model) handleResize() model {
+	fixedHeight := 7 // status + 2 dividers + input(3) + help
+	contentHeight := m.height - fixedHeight
+	if contentHeight < 5 {
+		contentHeight = 5
+	}
+
+	m.viewport.Width = m.width - 2
+	m.viewport.Height = contentHeight
+	m.textinput.Width = m.width - 6
+	m.list.SetWidth(m.width - 4)
+
+	if m.viewportDirty || m.lastRenderedWidth != m.width {
+		m.refreshViewport()
+		m.lastRenderedWidth = m.width
+	}
+	m.viewport.GotoBottom()
+
+	return m
+}
+
+func (m model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Handle session picker navigation
+	if m.showSessionPicker {
+		return m.handleSessionPickerKeypress(msg)
+	}
+
+	switch msg.Type {
+	case tea.KeyCtrlC, tea.KeyCtrlD:
+		m.quitting = true
+		return m, tea.Quit
+
+	case tea.KeyEsc:
+		m.textinput.Reset()
+		return m, nil
+
+	case tea.KeyEnter:
+		return m.handleEnter()
+
+	case tea.KeyUp:
+		m.viewport.ScrollUp(1)
+		return m, nil
+	case tea.KeyDown:
+		m.viewport.ScrollDown(1)
+		return m, nil
+	case tea.KeyPgUp:
+		m.viewport.ScrollUp(m.viewport.Height / 2)
+		return m, nil
+	case tea.KeyPgDown:
+		m.viewport.ScrollDown(m.viewport.Height / 2)
 		return m, nil
 	}
 
-	return m, tea.Batch(tiCmd, vpCmd, listCmd)
+	switch msg.String() {
+	case "ctrl+u":
+		m.viewport.ScrollUp(m.viewport.Height / 2)
+		return m, nil
+	case "ctrl+d":
+		m.viewport.ScrollDown(m.viewport.Height / 2)
+		return m, nil
+	}
 
+	var cmd tea.Cmd
+	m.textinput, cmd = m.textinput.Update(msg)
+	return m, cmd
 }
 
-func (m model) renderedMessages() []string {
-	allMessages := m.agent.GetSession().AllMessages()
+func (m model) handleSessionPickerKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyCtrlC, tea.KeyCtrlD:
+		m.quitting = true
+		return m, tea.Quit
 
-	var messages []string
-	for _, message := range allMessages {
-		if message.Type == api.MessageTypeUserInputRequest && message.Payload == ">>>" {
-			continue
+	case tea.KeyEsc:
+		// Cancel picker
+		m.showSessionPicker = false
+		m.sessionPickerItems = nil
+		m.agent.Input <- &api.SessionPickerResponse{Cancelled: true}
+		return m, nil
+
+	case tea.KeyEnter:
+		// Select session
+		if len(m.sessionPickerItems) > 0 {
+			selected := m.sessionPickerItems[m.sessionPickerIndex]
+			m.showSessionPicker = false
+			m.sessionPickerItems = nil
+			m.agent.Input <- &api.SessionPickerResponse{SessionID: selected.ID}
 		}
-		messages = append(messages, m.renderMessage(message))
+		return m, nil
+
+	case tea.KeyUp:
+		if m.sessionPickerIndex > 0 {
+			m.sessionPickerIndex--
+		}
+		return m, nil
+
+	case tea.KeyDown:
+		if m.sessionPickerIndex < len(m.sessionPickerItems)-1 {
+			m.sessionPickerIndex++
+		}
+		return m, nil
 	}
-	return messages
+
+	// j/k vim-style navigation
+	switch msg.String() {
+	case "j":
+		if m.sessionPickerIndex < len(m.sessionPickerItems)-1 {
+			m.sessionPickerIndex++
+		}
+		return m, nil
+	case "k":
+		if m.sessionPickerIndex > 0 {
+			m.sessionPickerIndex--
+		}
+		return m, nil
+	}
+
+	return m, nil
+}
+
+func (m model) handleEnter() (tea.Model, tea.Cmd) {
+	session := m.agent.GetSession()
+	m.cachedState = session.AgentState
+	m.cachedSession = session
+
+	if m.cachedState == api.AgentStateWaitingForInput && len(m.messages) > 0 {
+		if lastMsg := m.messages[len(m.messages)-1]; lastMsg.Type == api.MessageTypeUserChoiceRequest {
+			if _, ok := m.list.SelectedItem().(item); ok {
+				m.agent.Input <- &api.UserChoiceResponse{Choice: m.list.Index() + 1}
+			}
+			return m, nil
+		}
+	}
+
+	value := strings.TrimSpace(m.textinput.Value())
+	if value == "" {
+		return m, nil
+	}
+
+	// Intercept "sessions" command for interactive picker
+	if value == "sessions" {
+		m.textinput.Reset()
+		sessions, err := m.agent.ListSessions()
+		if err != nil {
+			klog.FromContext(context.Background()).Error(err, "failed to list sessions")
+			return m, nil
+		}
+		if len(sessions) == 0 {
+			return m, nil
+		}
+		m.showSessionPicker = true
+		m.sessionPickerItems = sessions
+		m.sessionPickerIndex = 0
+		return m, nil
+	}
+
+	userMsg := &api.Message{
+		Source:    api.MessageSourceUser,
+		Type:      api.MessageTypeText,
+		Payload:   value,
+		Timestamp: time.Now(),
+	}
+	m.messages = append(m.messages, userMsg)
+	m.viewportDirty = true
+	m.refreshViewport()
+	m.viewport.GotoBottom()
+
+	m.agent.Input <- &api.UserInputResponse{Query: value}
+	m.textinput.Reset()
+	m.thinkingStart = time.Now()
+
+	return m, nil
+}
+
+func (m *model) handleMessage(msg *api.Message) (tea.Model, tea.Cmd) {
+	session := m.agent.GetSession()
+	m.messages = session.AllMessages()
+	m.cachedState = session.AgentState
+	m.cachedSession = session
+	m.viewportDirty = true
+
+	m.refreshViewport()
+	m.viewport.GotoBottom()
+
+	if m.cachedState == api.AgentStateRunning || m.cachedState == api.AgentStateInitializing {
+		return m, m.spinner.Tick
+	}
+
+	return m, nil
+}
+
+func (m *model) refreshViewport() {
+	if !m.viewportDirty && m.lastRenderedWidth == m.viewport.Width {
+		return
+	}
+	m.viewportContent = m.renderAllMessages()
+	m.viewport.SetContent(m.viewportContent)
+	m.viewportDirty = false
+	m.lastRenderedWidth = m.viewport.Width
+}
+
+func (m model) renderAllMessages() string {
+	if len(m.messages) == 0 {
+		return lipgloss.JoinVertical(lipgloss.Left,
+			"",
+			logoStyle.Render(logo),
+			"",
+			lipgloss.NewStyle().PaddingLeft(1).Foreground(colorTextMuted).Render("Your AI-powered Kubernetes assistant"),
+			lipgloss.NewStyle().PaddingLeft(1).Foreground(colorTextDim).Render("Type a message to get started"),
+			"",
+		)
+	}
+
+	var sb strings.Builder
+	renderWidth := m.viewport.Width - 6
+	if renderWidth > 90 {
+		renderWidth = 90
+	}
+	if renderWidth < 40 {
+		renderWidth = 40
+	}
+
+	renderer, err := m.renderCache.getRenderer(renderWidth)
+	if err != nil {
+		return "Error rendering messages"
+	}
+
+	for _, msg := range m.messages {
+		if rendered := m.renderMessage(msg, renderer, renderWidth); rendered != "" {
+			sb.WriteString(rendered)
+		}
+	}
+
+	return sb.String()
+}
+
+func (m model) renderMessage(msg *api.Message, renderer *glamour.TermRenderer, width int) string {
+	if msg.Type == api.MessageTypeUserInputRequest {
+		if payload, ok := msg.Payload.(string); ok && payload == ">>>" {
+			return ""
+		}
+	}
+	if msg.Type == api.MessageTypeToolCallResponse {
+		return ""
+	}
+
+	if msg.ID != "" && msg.Type != api.MessageTypeToolCallRequest {
+		if cached, ok := m.renderCache.get(msg.ID); ok {
+			return cached
+		}
+	}
+
+	var result string
+	switch msg.Type {
+	case api.MessageTypeToolCallRequest:
+		result = m.renderToolCall(msg, width)
+	case api.MessageTypeError:
+		result = m.renderError(msg, width)
+	case api.MessageTypeUserChoiceRequest:
+		result = m.renderChoiceRequest(msg)
+	default:
+		result = m.renderTextMessage(msg, renderer, width)
+	}
+
+	if msg.ID != "" && result != "" && msg.Type != api.MessageTypeToolCallRequest {
+		m.renderCache.set(msg.ID, result)
+	}
+
+	return result
+}
+
+func (m model) renderTextMessage(msg *api.Message, renderer *glamour.TermRenderer, width int) string {
+	payload, ok := msg.Payload.(string)
+	if !ok {
+		return ""
+	}
+
+	timestamp := ""
+	if !msg.Timestamp.IsZero() {
+		timestamp = timestampStyle.Render(msg.Timestamp.Format("15:04"))
+	}
+
+	switch msg.Source {
+	case api.MessageSourceUser:
+		label := userLabelStyle.Render("You")
+		if timestamp != "" {
+			label += " " + timestamp
+		}
+		content := lipgloss.NewStyle().Foreground(colorText).Width(width).Render(payload)
+		return userMessageStyle.Width(width+2).Render(label+"\n"+content) + "\n"
+
+	case api.MessageSourceModel, api.MessageSourceAgent:
+		label := agentLabelStyle.Render("kubectl-ai")
+		if timestamp != "" {
+			label += " " + timestamp
+		}
+		rendered, err := renderer.Render(payload)
+		if err != nil {
+			rendered = payload
+		}
+		rendered = strings.TrimSpace(rendered)
+		return agentMessageStyle.Width(width+2).Render(label+"\n"+rendered) + "\n"
+	}
+
+	return ""
+}
+
+func (m model) renderToolCall(msg *api.Message, width int) string {
+	payload, ok := msg.Payload.(string)
+	if !ok {
+		return ""
+	}
+	icon := toolIconStyle.Render("⚡")
+	status := lipgloss.NewStyle().Foreground(colorSecondary).Render("Running")
+	command := toolCommandStyle.Render(payload)
+	content := icon + " " + status + "\n" + command
+	return toolBoxStyle.Width(width).Render(content) + "\n"
+}
+
+func (m model) renderError(msg *api.Message, width int) string {
+	payload, ok := msg.Payload.(string)
+	if !ok {
+		return ""
+	}
+	icon := errorStyle.Render("✗")
+	label := errorStyle.Render("Error")
+	content := lipgloss.NewStyle().Foreground(colorError).Width(width - 4).Render(payload)
+	return errorBoxStyle.Width(width).Render(icon+" "+label+"\n"+content) + "\n"
+}
+
+func (m model) renderChoiceRequest(msg *api.Message) string {
+	choiceReq, ok := msg.Payload.(*api.UserChoiceRequest)
+	if !ok {
+		return ""
+	}
+	return lipgloss.NewStyle().Foreground(colorWarning).Bold(true).Render("? "+choiceReq.Prompt) + "\n\n"
 }
 
 func (m model) View() string {
 	if m.quitting {
-		return quitTextStyle.Render("Not safe to quit yet.")
+		return lipgloss.NewStyle().Foreground(colorTextMuted).Padding(1).Render("Goodbye!")
 	}
-	mainView := fmt.Sprintf(
-		"%s%s",
-		m.viewport.View(),
-		gap,
-	)
-	if m.agent.GetSession().AgentState == api.AgentStateWaitingForInput {
-		var choiceRequest *api.UserChoiceRequest
-		if len(m.messages) > 0 {
-			if lastMsg := m.messages[len(m.messages)-1]; lastMsg.Type == api.MessageTypeUserChoiceRequest {
-				choiceRequest = lastMsg.Payload.(*api.UserChoiceRequest)
-			}
-		}
 
-		if choiceRequest != nil {
-			items := make([]list.Item, len(choiceRequest.Options))
-			for i, option := range choiceRequest.Options {
-				items[i] = item(option.Label)
-			}
-			m.list.SetItems(items)
-			m.list.Title = "Select an option:"
-			mainView += listStyle.Render(m.list.View())
-		} else {
-			mainView += m.textarea.View()
-		}
-	} else {
-		mainView += m.textarea.View()
+	// Cache session for this render
+	if m.cachedSession == nil {
+		m.cachedSession = m.agent.GetSession()
+		m.cachedState = m.cachedSession.AgentState
 	}
-	return mainView
+
+	// Show session picker overlay if active
+	if m.showSessionPicker {
+		return lipgloss.JoinVertical(lipgloss.Left,
+			m.renderStatusBar(),
+			m.renderDivider(),
+			m.renderSessionPicker(),
+			m.renderDivider(),
+			m.renderSessionPickerHelp(),
+		)
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left,
+		m.renderStatusBar(),
+		m.renderDivider(),
+		lipgloss.NewStyle().PaddingLeft(1).Render(m.viewport.View()),
+		m.renderDivider(),
+		m.renderInputArea(),
+		m.renderHelp(),
+	)
 }
 
-func (m model) renderMessage(message *api.Message) string {
-	sourceDisplayName := ""
-	switch message.Source {
-	case api.MessageSourceUser:
-		sourceDisplayName = m.username
-	case api.MessageSourceModel, api.MessageSourceAgent:
-		sourceDisplayName = "AI"
-	}
-	text := m.senderStyle.Render(fmt.Sprintf("%s: ", sourceDisplayName))
-	glamourRenderWidth := m.viewport.Width - m.viewport.Style.GetHorizontalFrameSize() - lipgloss.Width(text)
-
-	renderer, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
-		glamour.WithWordWrap(glamourRenderWidth),
-	)
-	if err != nil {
-		klog.Errorf("failed to create glamour renderer: %v", err)
-		return fmt.Sprintf("error rendering message: %v", err)
+func (m model) renderStatusBar() string {
+	session := m.cachedSession
+	if session == nil {
+		session = m.agent.GetSession()
 	}
 
-	var renderedText string
-	var contentToRender string
+	sep := statusSepStyle.Render(" | ")
 
-	switch p := message.Payload.(type) {
-	case string:
-		contentToRender = p
-	case *api.UserChoiceRequest:
-		contentToRender = p.Prompt
+	appName := statusAppStyle.Render("kubectl-ai")
+	sessionName := session.Name
+	if sessionName == "" {
+		sessionName = session.ID
+	}
+	sessionNameStyled := statusSessionStyle.Render(sessionName)
+	state := m.renderState(session.AgentState)
+	left := appName + sep + sessionNameStyled + sep + state
+
+	modelName := session.ModelID
+	if modelName == "" {
+		modelName = "unknown"
+	}
+	modelStyled := statusModelStyle.Render(modelName)
+
+	// Show context usage as percentage
+	var contextStr string
+	if session.MaxTokens > 0 && session.TotalTokens > 0 {
+		pct := float64(session.TotalTokens) / float64(session.MaxTokens) * 100
+		contextStr = fmt.Sprintf("%.0f%% context", pct)
+	} else if session.TotalTokens > 0 {
+		// No max tokens known, just show token count
+		contextStr = formatTokenCount(session.TotalTokens)
+	} else {
+		contextStr = "0% context"
+	}
+	// Color based on usage level
+	var contextStyled string
+	if session.MaxTokens > 0 {
+		pct := float64(session.TotalTokens) / float64(session.MaxTokens) * 100
+		if pct >= 90 {
+			contextStyled = statusContextError.Render(contextStr)
+		} else if pct >= 70 {
+			contextStyled = statusContextWarning.Render(contextStr)
+		} else {
+			contextStyled = statusItemStyle.Render(contextStr)
+		}
+	} else {
+		contextStyled = statusItemStyle.Render(contextStr)
+	}
+
+	right := modelStyled + sep + contextStyled
+
+	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
+	if gap < 0 {
+		gap = 0
+	}
+
+	content := " " + left + strings.Repeat(" ", gap) + right + " "
+	return statusBarStyle.Width(m.width).Render(content)
+}
+
+func (m model) renderState(state api.AgentState) string {
+	switch state {
+	case api.AgentStateRunning:
+		elapsed := ""
+		if !m.thinkingStart.IsZero() {
+			elapsed = " " + formatDuration(time.Since(m.thinkingStart))
+		}
+		return spinnerStyle.Render(m.spinner.View()) + statusActiveStyle.Render(" Thinking...") + statusItemStyle.Render(elapsed)
+	case api.AgentStateInitializing:
+		return spinnerStyle.Render(m.spinner.View()) + statusItemStyle.Render(" Initializing...")
+	case api.AgentStateWaitingForInput:
+		return statusActiveStyle.Render("● Ready")
+	case api.AgentStateIdle:
+		return statusItemStyle.Render("○ Idle")
+	case api.AgentStateDone:
+		return lipgloss.NewStyle().Foreground(colorSuccess).Render("✓ Done")
+	case api.AgentStateExited:
+		return statusItemStyle.Render("○ Exited")
 	default:
-		return "" // Don't render unknown payload types
+		return statusItemStyle.Render(string(state))
+	}
+}
+
+func (m model) renderDivider() string {
+	return dividerStyle.Render(strings.Repeat("─", m.width))
+}
+
+func (m model) renderInputArea() string {
+	state := m.cachedState
+
+	if state == api.AgentStateWaitingForInput && len(m.messages) > 0 {
+		if lastMsg := m.messages[len(m.messages)-1]; lastMsg.Type == api.MessageTypeUserChoiceRequest {
+			if choiceReq, ok := lastMsg.Payload.(*api.UserChoiceRequest); ok {
+				items := make([]list.Item, len(choiceReq.Options))
+				for i, opt := range choiceReq.Options {
+					items[i] = item(opt.Label)
+				}
+				m.list.SetItems(items)
+				title := listTitleStyle.Render("? " + choiceReq.Prompt)
+				return lipgloss.NewStyle().Padding(0, 1).Render(
+					lipgloss.JoinVertical(lipgloss.Left, title, m.list.View()),
+				)
+			}
+		}
 	}
 
-	switch message.Type {
-	case api.MessageTypeToolCallRequest:
-		contentToRender = fmt.Sprintf("Running: `%s`", contentToRender)
-	case api.MessageTypeError:
-		contentToRender = fmt.Sprintf("Error: %s", contentToRender)
-	case api.MessageTypeToolCallResponse:
-		return "" // Or a summary
+	inputContent := m.textinput.View()
+	var box string
+	if state == api.AgentStateRunning || state == api.AgentStateInitializing {
+		box = inputBoxDimStyle.Width(m.width - 4).Render(inputContent)
+	} else {
+		box = inputBoxStyle.Width(m.width - 4).Render(inputContent)
 	}
 
-	renderedText, err = renderer.Render(contentToRender)
-	if err != nil {
-		klog.Errorf("failed to render markdown: %v", err)
-		return text + contentToRender // Fallback to non-rendered
+	return lipgloss.NewStyle().Padding(0, 1).Render(box)
+}
+
+func (m model) renderHelp() string {
+	var hints []string
+	if m.cachedState == api.AgentStateRunning {
+		hints = []string{"Thinking...", "Ctrl+C: cancel"}
+	} else {
+		hints = []string{"Enter: send", "Esc: clear", "Ctrl+C: quit"}
+	}
+	if m.viewport.TotalLineCount() > m.viewport.Height {
+		hints = append(hints, "↑/↓: scroll")
+	}
+	return helpStyle.Padding(0, 2).Render(strings.Join(hints, " • "))
+}
+
+func (m model) renderSessionPicker() string {
+	if len(m.sessionPickerItems) == 0 {
+		return lipgloss.NewStyle().Padding(1, 2).Foreground(colorTextMuted).Render("No sessions found")
 	}
 
-	return text + renderedText
+	titleStyle := lipgloss.NewStyle().Foreground(colorWarning).Bold(true).Padding(0, 0, 1, 0)
+	title := titleStyle.Render("Select a session:")
+
+	// Calculate available height for the list
+	availableHeight := m.height - 8 // status bar, dividers, help, title
+	if availableHeight < 3 {
+		availableHeight = 3
+	}
+
+	// Build the table rows
+	var rows []string
+
+	// Header
+	headerStyle := lipgloss.NewStyle().Foreground(colorTextDim).Bold(true)
+	header := headerStyle.Render(fmt.Sprintf("  %-12s  %-16s  %-16s  %-20s  %s",
+		"ID", "Created", "Last Modified", "Model", "Messages"))
+	rows = append(rows, header)
+
+	// Separator
+	rows = append(rows, lipgloss.NewStyle().Foreground(colorTextDim).Render(strings.Repeat("─", m.width-4)))
+
+	// Session rows - use consistent formatting without relying on style padding
+	selectedStyle := lipgloss.NewStyle().Foreground(colorPrimary).Bold(true)
+	normalStyle := lipgloss.NewStyle().Foreground(colorTextMuted)
+
+	for i, session := range m.sessionPickerItems {
+		// Truncate ID for display
+		displayID := session.ID
+		if len(displayID) > 12 {
+			displayID = displayID[:12]
+		}
+
+		created := session.CreatedAt.Format("Jan 02 15:04")
+		modified := session.LastModified.Format("Jan 02 15:04")
+
+		model := session.ModelID
+		if len(model) > 20 {
+			model = model[:17] + "..."
+		}
+		if model == "" {
+			model = "-"
+		}
+
+		// Build row with consistent prefix width
+		row := fmt.Sprintf("%-12s  %-16s  %-16s  %-20s  %d",
+			displayID, created, modified, model, session.MessageCount)
+
+		if i == m.sessionPickerIndex {
+			rows = append(rows, selectedStyle.Render("> "+row))
+		} else {
+			rows = append(rows, normalStyle.Render("  "+row))
+		}
+
+		// Stop if we've filled the available height
+		if len(rows) >= availableHeight {
+			break
+		}
+	}
+
+	content := lipgloss.JoinVertical(lipgloss.Left, rows...)
+	return lipgloss.NewStyle().Padding(1, 2).Render(
+		lipgloss.JoinVertical(lipgloss.Left, title, content),
+	)
+}
+
+func (m model) renderSessionPickerHelp() string {
+	hints := []string{"↑/↓: navigate", "Enter: select", "Esc: cancel"}
+	return helpStyle.Padding(0, 2).Render(strings.Join(hints, " • "))
+}
+
+func formatDuration(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm%ds", int(d.Minutes()), int(d.Seconds())%60)
+	}
+	return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
+}
+
+func formatTokenCount(tokens int64) string {
+	if tokens < 1000 {
+		return fmt.Sprintf("%d tokens", tokens)
+	}
+	if tokens < 1000000 {
+		return fmt.Sprintf("%.1fk tokens", float64(tokens)/1000)
+	}
+	return fmt.Sprintf("%.1fM tokens", float64(tokens)/1000000)
 }

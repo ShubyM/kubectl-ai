@@ -548,6 +548,32 @@ func (r *GeminiChatResponse) UsageMetadata() any {
 	return r.geminiResponse.UsageMetadata
 }
 
+// GetInputTokens returns the input token count
+func (r *GeminiChatResponse) GetInputTokens() int64 {
+	if r.geminiResponse.UsageMetadata != nil {
+		return int64(r.geminiResponse.UsageMetadata.PromptTokenCount)
+	}
+	return 0
+}
+
+// GetOutputTokens returns the output token count
+func (r *GeminiChatResponse) GetOutputTokens() int64 {
+	if r.geminiResponse.UsageMetadata != nil {
+		return int64(r.geminiResponse.UsageMetadata.CandidatesTokenCount)
+	}
+	return 0
+}
+
+// GetTotalTokens returns the total token count
+func (r *GeminiChatResponse) GetTotalTokens() int64 {
+	if r.geminiResponse.UsageMetadata != nil {
+		return int64(r.geminiResponse.UsageMetadata.TotalTokenCount)
+	}
+	return 0
+}
+
+var _ TokenUsage = &GeminiChatResponse{}
+
 // Candidates returns the candidates for the response.
 func (r *GeminiChatResponse) Candidates() []Candidate {
 	var candidates []Candidate
