@@ -144,6 +144,14 @@ type Agent struct {
 	// This allows Cancel() to interrupt LLM streaming and tool execution
 	iterationCancel context.CancelFunc
 	iterationMu     sync.Mutex
+
+	// currentOperationReadOnly tracks whether the current operation is read-only.
+	// This is used to determine the cancellation message behavior.
+	// - "yes": all pending operations are read-only (safe to cancel immediately)
+	// - "no": at least one operation modifies resources
+	// - "unknown": operation type cannot be determined
+	// - "": no operation in progress
+	currentOperationReadOnly string
 }
 
 // Assert InMemoryChatStore implements ChatMessageStore
@@ -390,6 +398,52 @@ func (c *Agent) LastErr() error {
 	return c.lastErr
 }
 
+// getCancelMessage returns the appropriate message to show when canceling.
+// For read-only operations, we return an empty string (silent cancel).
+// For write operations or unknown, we return a visible message.
+func (c *Agent) getCancelMessage() string {
+	c.iterationMu.Lock()
+	opType := c.currentOperationReadOnly
+	c.iterationMu.Unlock()
+
+	// For write operations (modifies resources), show explicit cancel message
+	if opType == "write" {
+		return "Operation cancelled."
+	}
+	// For read-only operations and unknown, cancel silently
+	return ""
+}
+
+// resetOperationType clears the current operation type tracking.
+func (c *Agent) resetOperationType() {
+	c.iterationMu.Lock()
+	c.currentOperationReadOnly = ""
+	c.iterationMu.Unlock()
+}
+
+// setOperationType updates the current operation type based on pending tool calls.
+// Sets to "write" if any tool modifies resources, "readonly" if all are read-only.
+func (c *Agent) setOperationType(toolCalls []ToolCallAnalysis) {
+	c.iterationMu.Lock()
+	defer c.iterationMu.Unlock()
+
+	// Default to read-only
+	c.currentOperationReadOnly = "readonly"
+
+	for _, call := range toolCalls {
+		// ModifiesResourceStr: "yes" = modifies, "no" = read-only, "unknown" = unknown
+		if call.ModifiesResourceStr == "yes" {
+			// At least one write operation
+			c.currentOperationReadOnly = "write"
+			return
+		}
+		if call.ModifiesResourceStr == "unknown" {
+			// Unknown, treat as potentially modifying but keep checking
+			c.currentOperationReadOnly = "unknown"
+		}
+	}
+}
+
 // Cancel stops the current operation without closing the agent.
 // The agent will transition to the Done state and be ready for new input.
 func (c *Agent) Cancel() {
@@ -596,7 +650,10 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 					c.pendingFunctionCalls = []ToolCallAnalysis{}
 					c.currChatContent = nil
 					c.currIteration = 0
-					c.addMessage(api.MessageSourceAgent, api.MessageTypeText, "Operation cancelled.")
+					if msg := c.getCancelMessage(); msg != "" {
+						c.addMessage(api.MessageSourceAgent, api.MessageTypeText, msg)
+					}
+					c.resetOperationType()
 					continue
 				default:
 					// No cancel signal, continue processing
@@ -637,7 +694,10 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 						c.pendingFunctionCalls = []ToolCallAnalysis{}
 						c.currChatContent = nil
 						c.currIteration = 0
-						c.addMessage(api.MessageSourceAgent, api.MessageTypeText, "Operation cancelled.")
+						if msg := c.getCancelMessage(); msg != "" {
+							c.addMessage(api.MessageSourceAgent, api.MessageTypeText, msg)
+						}
+						c.resetOperationType()
 						continue
 					}
 					log.Error(err, "error sending streaming LLM response")
@@ -741,7 +801,10 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 					c.pendingFunctionCalls = []ToolCallAnalysis{}
 					c.currChatContent = nil
 					c.currIteration = 0
-					c.addMessage(api.MessageSourceAgent, api.MessageTypeText, "Operation cancelled.")
+					if msg := c.getCancelMessage(); msg != "" {
+						c.addMessage(api.MessageSourceAgent, api.MessageTypeText, msg)
+					}
+					c.resetOperationType()
 					continue
 				}
 
@@ -792,6 +855,9 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 
 				// mark the tools for dispatching
 				c.pendingFunctionCalls = toolCallAnalysisResults
+
+				// Track the operation type for cancel message customization
+				c.setOperationType(toolCallAnalysisResults)
 
 				interactiveToolCallIndex := -1
 				modifiesResourceToolCallIndex := -1

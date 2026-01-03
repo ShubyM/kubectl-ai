@@ -839,3 +839,118 @@ func TestCancelMethodIdempotent(t *testing.T) {
 		t.Fatalf("expected idle state, got %s", st)
 	}
 }
+
+// =============================================================================
+// Read-Only Operation Detection Tests
+// =============================================================================
+//
+// When canceling operations, the behavior differs based on whether the operation
+// is read-only or modifies resources:
+// - Read-only operations (kubectl get, describe, logs): Cancel silently
+// - Write operations (kubectl apply, delete, patch): Show "Operation cancelled." message
+// - Unknown operations: Cancel silently (err on side of less noise)
+//
+// =============================================================================
+
+// TestCancelMessageForReadOnlyOperation verifies that read-only operations
+// produce no cancel message (silent cancellation).
+func TestCancelMessageForReadOnlyOperation(t *testing.T) {
+	a := &Agent{}
+
+	// Test read-only operation type
+	a.setOperationType([]ToolCallAnalysis{
+		{ModifiesResourceStr: "no"}, // Read-only
+	})
+
+	msg := a.getCancelMessage()
+	if msg != "" {
+		t.Errorf("expected empty message for read-only operation, got %q", msg)
+	}
+}
+
+// TestCancelMessageForWriteOperation verifies that write operations
+// produce an explicit cancel message.
+func TestCancelMessageForWriteOperation(t *testing.T) {
+	a := &Agent{}
+
+	// Test write operation type
+	a.setOperationType([]ToolCallAnalysis{
+		{ModifiesResourceStr: "yes"}, // Write operation
+	})
+
+	msg := a.getCancelMessage()
+	if msg != "Operation cancelled." {
+		t.Errorf("expected 'Operation cancelled.' for write operation, got %q", msg)
+	}
+}
+
+// TestCancelMessageForUnknownOperation verifies that unknown operations
+// produce no cancel message (silent cancellation).
+func TestCancelMessageForUnknownOperation(t *testing.T) {
+	a := &Agent{}
+
+	// Test unknown operation type
+	a.setOperationType([]ToolCallAnalysis{
+		{ModifiesResourceStr: "unknown"},
+	})
+
+	msg := a.getCancelMessage()
+	if msg != "" {
+		t.Errorf("expected empty message for unknown operation, got %q", msg)
+	}
+}
+
+// TestCancelMessageForMixedOperations verifies that if any operation is a write,
+// the cancel message is shown.
+func TestCancelMessageForMixedOperations(t *testing.T) {
+	a := &Agent{}
+
+	// Test mixed operations - one write should trigger message
+	a.setOperationType([]ToolCallAnalysis{
+		{ModifiesResourceStr: "no"},  // Read-only
+		{ModifiesResourceStr: "yes"}, // Write operation
+		{ModifiesResourceStr: "no"},  // Read-only
+	})
+
+	msg := a.getCancelMessage()
+	if msg != "Operation cancelled." {
+		t.Errorf("expected 'Operation cancelled.' when any operation is a write, got %q", msg)
+	}
+}
+
+// TestResetOperationType verifies that resetOperationType clears the tracking.
+func TestResetOperationType(t *testing.T) {
+	a := &Agent{}
+
+	// Set an operation type
+	a.setOperationType([]ToolCallAnalysis{
+		{ModifiesResourceStr: "yes"},
+	})
+
+	// Verify it was set
+	if msg := a.getCancelMessage(); msg != "Operation cancelled." {
+		t.Fatalf("expected write operation type to be set")
+	}
+
+	// Reset
+	a.resetOperationType()
+
+	// After reset, should behave as if no operation (silent cancel)
+	if msg := a.getCancelMessage(); msg != "" {
+		t.Errorf("expected empty message after reset, got %q", msg)
+	}
+}
+
+// TestSetOperationTypeWithEmptyList verifies that an empty tool call list
+// defaults to read-only behavior.
+func TestSetOperationTypeWithEmptyList(t *testing.T) {
+	a := &Agent{}
+
+	// Set with empty list
+	a.setOperationType([]ToolCallAnalysis{})
+
+	// Should default to read-only (silent cancel)
+	if msg := a.getCancelMessage(); msg != "" {
+		t.Errorf("expected empty message for empty tool list, got %q", msg)
+	}
+}
