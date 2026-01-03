@@ -559,6 +559,17 @@
                 }
             };
 
+            const cancelOperation = async () => {
+                if (!currentSessionId) return;
+                try {
+                    await fetch(`api/sessions/${encodeURIComponent(currentSessionId)}/cancel`, {
+                        method: 'POST'
+                    });
+                } catch (error) {
+                    console.error('Error cancelling operation:', error);
+                }
+            };
+
             const handleSubmit = (e) => {
                 e.preventDefault();
                 if (isWaitingForChoice) {
@@ -1031,19 +1042,28 @@
                                                 } ${!canSendMessage ? (isDarkMode ? 'bg-gray-800 text-gray-500' : 'bg-gray-50 text-gray-500') : ''}`}
                                             rows="1"
                                         />
-                                        {agentState === 'running' && (
-                                            <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
-                                                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-brand-500"></div>
-                                            </div>
-                                        )}
                                     </div>
-                                    <button
-                                        type="submit"
-                                        disabled={!canSendMessage || !input.trim()}
-                                        className="px-6 py-3 bg-gradient-to-r from-brand-500 to-brand-600 text-white rounded-xl hover:from-brand-600 hover:to-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 font-medium shadow-sm self-end"
-                                    >
-                                        Send
-                                    </button>
+                                    {agentState === 'running' ? (
+                                        <button
+                                            type="button"
+                                            onClick={cancelOperation}
+                                            className="px-6 py-3 bg-gradient-to-r from-red-500 to-red-600 text-white rounded-xl hover:from-red-600 hover:to-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 transition-all duration-200 font-medium shadow-sm self-end flex items-center space-x-2"
+                                        >
+                                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+                                            </svg>
+                                            <span>Stop</span>
+                                        </button>
+                                    ) : (
+                                        <button
+                                            type="submit"
+                                            disabled={!canSendMessage || !input.trim()}
+                                            className="px-6 py-3 bg-gradient-to-r from-brand-500 to-brand-600 text-white rounded-xl hover:from-brand-600 hover:to-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 font-medium shadow-sm self-end"
+                                        >
+                                            Send
+                                        </button>
+                                    )}
                                 </form>
                                 <div className={`flex items-center justify-center mt-3 text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
                                     <span>💡 Try: "scale nginx to 3 replicas" or "show me pod status"</span>

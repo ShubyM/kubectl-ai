@@ -710,3 +710,132 @@ done:
 	// to verify no leaks, but that's flaky in test environments. The important
 	// thing is that the test completes without hanging.
 }
+
+// TestCancelMethodStopsRunningOperation verifies that calling Agent.Cancel()
+// stops the current operation and transitions to Done state without closing the agent.
+func TestCancelMethodStopsRunningOperation(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	store := sessions.NewInMemoryChatStore()
+	client := mocks.NewMockClient(ctrl)
+	chat := mocks.NewMockChat(ctrl)
+
+	client.EXPECT().StartChat(gomock.Any(), "test-model").Return(chat)
+	chat.EXPECT().Initialize(gomock.Any()).Return(nil)
+	chat.EXPECT().SetFunctionDefinitions(gomock.Any()).Return(nil)
+
+	// Create a streaming iterator that checks for context cancellation
+	// This simulates real LLM behavior where the HTTP request respects context
+	chat.EXPECT().SendStreaming(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(ctx context.Context, content ...any) (gollm.ChatResponseIterator, error) {
+			iter := gollm.ChatResponseIterator(func(yield func(gollm.ChatResponse, error) bool) {
+				// Wait for context cancellation or timeout
+				select {
+				case <-ctx.Done():
+					// Context was cancelled - return error
+					yield(nil, ctx.Err())
+					return
+				case <-time.After(5 * time.Second):
+					yield(chatWith(fText("should not reach here")), nil)
+				}
+			})
+			return iter, nil
+		})
+
+	var toolset tools.Tools
+	toolset.Init()
+
+	a := &Agent{
+		ChatMessageStore: store,
+		LLM:              client,
+		Model:            "test-model",
+		Tools:            toolset,
+		MaxIterations:    4,
+		Session: &api.Session{
+			ID:               "test-session",
+			ChatMessageStore: store,
+			AgentState:       api.AgentStateIdle,
+		},
+	}
+
+	ctx := context.Background()
+	if err := a.Init(ctx); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	if err := a.Run(ctx, "test query"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	// Give the agent time to start processing and enter Running state
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify agent is in Running state
+	if st := a.AgentState(); st != api.AgentStateRunning {
+		t.Fatalf("expected running state, got %s", st)
+	}
+
+	// Call Cancel() method
+	a.Cancel()
+
+	// Wait for cancellation to take effect
+	timeout := time.After(2 * time.Second)
+	for {
+		select {
+		case <-timeout:
+			t.Fatalf("timeout waiting for agent to transition to done state, current state: %s", a.AgentState())
+		default:
+			if a.AgentState() == api.AgentStateDone {
+				// Success - agent transitioned to Done state
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+}
+
+// TestCancelMethodIdempotent verifies that calling Cancel() multiple times is safe.
+func TestCancelMethodIdempotent(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	store := sessions.NewInMemoryChatStore()
+	client := mocks.NewMockClient(ctrl)
+	chat := mocks.NewMockChat(ctrl)
+
+	client.EXPECT().StartChat(gomock.Any(), "test-model").Return(chat)
+	chat.EXPECT().Initialize(gomock.Any()).Return(nil)
+	chat.EXPECT().SetFunctionDefinitions(gomock.Any()).Return(nil)
+
+	var toolset tools.Tools
+	toolset.Init()
+
+	a := &Agent{
+		ChatMessageStore: store,
+		LLM:              client,
+		Model:            "test-model",
+		Tools:            toolset,
+		MaxIterations:    4,
+		Session: &api.Session{
+			ID:               "test-session",
+			ChatMessageStore: store,
+			AgentState:       api.AgentStateIdle,
+		},
+	}
+
+	ctx := context.Background()
+	if err := a.Init(ctx); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	// Call Cancel() multiple times - should not panic or cause issues
+	a.Cancel()
+	a.Cancel()
+	a.Cancel()
+
+	// Agent should still be functional (in idle state, not closed)
+	if st := a.AgentState(); st != api.AgentStateIdle {
+		t.Fatalf("expected idle state, got %s", st)
+	}
+}

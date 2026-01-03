@@ -135,6 +135,15 @@ type Agent struct {
 
 	// cancel is the function to cancel the agent's context
 	cancel context.CancelFunc
+
+	// cancelCh is used to signal cancellation of the current operation
+	// without shutting down the entire agent
+	cancelCh chan struct{}
+
+	// iterationCancel cancels the current running iteration's context
+	// This allows Cancel() to interrupt LLM streaming and tool execution
+	iterationCancel context.CancelFunc
+	iterationMu     sync.Mutex
 }
 
 // Assert InMemoryChatStore implements ChatMessageStore
@@ -200,6 +209,7 @@ func (s *Agent) Init(ctx context.Context) error {
 
 	s.Input = make(chan any, 10)
 	s.Output = make(chan any, 10)
+	s.cancelCh = make(chan struct{}, 1)
 	s.currIteration = 0
 	// when we support session, we will need to initialize this with the
 	// current history of the conversation.
@@ -380,6 +390,30 @@ func (c *Agent) LastErr() error {
 	return c.lastErr
 }
 
+// Cancel stops the current operation without closing the agent.
+// The agent will transition to the Done state and be ready for new input.
+func (c *Agent) Cancel() {
+	klog.Info("Cancel requested for agent")
+
+	// Cancel the current iteration's context to interrupt LLM streaming and tool execution
+	c.iterationMu.Lock()
+	if c.iterationCancel != nil {
+		klog.Info("Cancelling current iteration context")
+		c.iterationCancel()
+		c.iterationCancel = nil
+	}
+	c.iterationMu.Unlock()
+
+	// Signal cancellation via the cancel channel
+	select {
+	case c.cancelCh <- struct{}{}:
+		klog.Info("Cancel signal sent")
+	default:
+		// Channel already has a signal or is not being listened to
+		klog.Info("Cancel signal not sent (already pending or not in running state)")
+	}
+}
+
 func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 	log := klog.FromContext(ctx)
 
@@ -554,6 +588,20 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 			}
 
 			if c.AgentState() == api.AgentStateRunning {
+				// Check for cancellation before processing
+				select {
+				case <-c.cancelCh:
+					log.Info("Cancel signal received, stopping current operation")
+					c.setAgentState(api.AgentStateDone)
+					c.pendingFunctionCalls = []ToolCallAnalysis{}
+					c.currChatContent = nil
+					c.currIteration = 0
+					c.addMessage(api.MessageSourceAgent, api.MessageTypeText, "Operation cancelled.")
+					continue
+				default:
+					// No cancel signal, continue processing
+				}
+
 				log.Info("Processing agentic loop", "currIteration", c.currIteration, "maxIterations", c.MaxIterations, "currChatContentLen", len(c.currChatContent))
 
 				if c.currIteration >= c.MaxIterations {
@@ -563,9 +611,35 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 					continue
 				}
 
+				// Create a cancellable context for this iteration
+				// This allows Cancel() to interrupt LLM streaming and tool execution
+				iterCtx, iterCancel := context.WithCancel(ctx)
+				c.iterationMu.Lock()
+				c.iterationCancel = iterCancel
+				c.iterationMu.Unlock()
+
+				// Helper to clean up the iteration context
+				cleanupIterCtx := func() {
+					iterCancel()
+					c.iterationMu.Lock()
+					c.iterationCancel = nil
+					c.iterationMu.Unlock()
+				}
+
 				// we run the agentic loop for one iteration
-				stream, err := c.llmChat.SendStreaming(ctx, c.currChatContent...)
+				stream, err := c.llmChat.SendStreaming(iterCtx, c.currChatContent...)
 				if err != nil {
+					cleanupIterCtx()
+					// Check if this was due to cancellation
+					if iterCtx.Err() == context.Canceled {
+						log.Info("LLM streaming cancelled")
+						c.setAgentState(api.AgentStateDone)
+						c.pendingFunctionCalls = []ToolCallAnalysis{}
+						c.currChatContent = nil
+						c.currIteration = 0
+						c.addMessage(api.MessageSourceAgent, api.MessageTypeText, "Operation cancelled.")
+						continue
+					}
 					log.Error(err, "error sending streaming LLM response")
 					c.setAgentState(api.AgentStateDone)
 					c.pendingFunctionCalls = []ToolCallAnalysis{}
@@ -598,9 +672,30 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 				// accumulator for streamed text
 				var streamedText string
 				var llmError error
+				var cancelled bool
 
+			streamLoop:
 				for response, err := range stream {
+					// Check for cancellation during streaming (via cancel channel or context)
+					select {
+					case <-c.cancelCh:
+						log.Info("Cancel signal received during streaming")
+						cancelled = true
+						break streamLoop
+					case <-iterCtx.Done():
+						log.Info("Iteration context cancelled during streaming")
+						cancelled = true
+						break streamLoop
+					default:
+					}
+
 					if err != nil {
+						// Check if this was due to cancellation
+						if iterCtx.Err() == context.Canceled {
+							log.Info("Streaming error due to cancellation")
+							cancelled = true
+							break streamLoop
+						}
 						log.Error(err, "error reading streaming LLM response")
 						llmError = err
 						c.setAgentState(api.AgentStateDone)
@@ -638,7 +733,20 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 						}
 					}
 				}
+
+				// Handle cancellation
+				if cancelled {
+					cleanupIterCtx()
+					c.setAgentState(api.AgentStateDone)
+					c.pendingFunctionCalls = []ToolCallAnalysis{}
+					c.currChatContent = nil
+					c.currIteration = 0
+					c.addMessage(api.MessageSourceAgent, api.MessageTypeText, "Operation cancelled.")
+					continue
+				}
+
 				if llmError != nil {
+					cleanupIterCtx()
 					log.Error(llmError, "error streaming LLM response")
 					c.setAgentState(api.AgentStateDone)
 					c.pendingFunctionCalls = []ToolCallAnalysis{}
@@ -653,6 +761,7 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 				}
 				// If no function calls to be made, we're done
 				if len(functionCalls) == 0 {
+					cleanupIterCtx()
 					log.Info("No function calls to be made, so most likely the task is completed, so we're done.")
 					c.setAgentState(api.AgentStateDone)
 					c.currChatContent = []any{}
@@ -669,8 +778,9 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 					continue
 				}
 
-				toolCallAnalysisResults, err := c.analyzeToolCalls(ctx, functionCalls)
+				toolCallAnalysisResults, err := c.analyzeToolCalls(iterCtx, functionCalls)
 				if err != nil {
+					cleanupIterCtx()
 					log.Error(err, "error analyzing tool calls")
 					c.setAgentState(api.AgentStateDone)
 					c.pendingFunctionCalls = []ToolCallAnalysis{}

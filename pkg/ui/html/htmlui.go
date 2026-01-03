@@ -142,6 +142,7 @@ func NewHTMLUserInterface(manager *agent.AgentManager, sessionManager *sessions.
 	mux.HandleFunc("GET /api/sessions/{id}/stream", u.handleSessionStream)
 	mux.HandleFunc("POST /api/sessions/{id}/send-message", u.handlePOSTSendMessage)
 	mux.HandleFunc("POST /api/sessions/{id}/choose-option", u.handlePOSTChooseOption)
+	mux.HandleFunc("POST /api/sessions/{id}/cancel", u.handlePOSTCancel)
 
 	httpServerListener, err := net.Listen("tcp", listenAddress)
 	if err != nil {
@@ -444,6 +445,30 @@ func (u *HTMLUserInterface) handlePOSTChooseOption(w http.ResponseWriter, req *h
 
 	// Send the choice to the agent
 	agent.Input <- &api.UserChoiceResponse{Choice: choiceIndex}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func (u *HTMLUserInterface) handlePOSTCancel(w http.ResponseWriter, req *http.Request) {
+	ctx := req.Context()
+	log := klog.FromContext(ctx)
+
+	id := req.PathValue("id")
+	if id == "" {
+		http.Error(w, "missing session id", http.StatusBadRequest)
+		return
+	}
+
+	// Get the agent
+	agent, err := u.manager.GetAgent(ctx, id)
+	if err != nil {
+		log.Error(err, "getting agent for cancel")
+		http.Error(w, "agent not found", http.StatusNotFound)
+		return
+	}
+
+	// Cancel the current operation
+	agent.Cancel()
 
 	w.WriteHeader(http.StatusOK)
 }
