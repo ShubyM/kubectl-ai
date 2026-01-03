@@ -272,19 +272,16 @@ func TestAgentEndToEndMetaClear(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 
-	// Expect startup greeting + prompt
+	// When there are existing messages in the session, no greeting is sent.
+	// We only expect the user input request.
 	m1 := recvMsg(t, ctx, a.Output)
-	if m1.Type != api.MessageTypeText || m1.Source != api.MessageSourceAgent {
-		t.Fatalf("expected greeting text from agent, got type=%v source=%v", m1.Type, m1.Source)
+	if m1.Type != api.MessageTypeUserInputRequest {
+		t.Fatalf("expected user-input-request, got %v", m1.Type)
 	}
 
-	m2 := recvMsg(t, ctx, a.Output)
-	if m2.Type != api.MessageTypeUserInputRequest {
-		t.Fatalf("expected user-input-request, got %v", m2.Type)
-	}
-
-	if got := len(store.ChatMessages()); got != 4 {
-		t.Fatalf("precondition: expected 4 messages before clear, got %d", got)
+	// 2 initial messages + 1 input request = 3 messages before clear
+	if got := len(store.ChatMessages()); got != 3 {
+		t.Fatalf("precondition: expected 3 messages before clear, got %d", got)
 	}
 
 	// UI sends the meta command
