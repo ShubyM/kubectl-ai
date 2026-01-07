@@ -758,8 +758,12 @@ var verifyTemplate = template.Must(template.New("verify").Parse(`#!/usr/bin/env 
 set -euo pipefail
 
 # This script verifies that the model correctly identified policy violations.
-# The model's output should identify the following resources as violations:
+# Expected violations (must be detected):
 {{range .Violations}}
+# - {{.Kind}}/{{.Name}}
+{{end}}
+# Compliant resources (must NOT be flagged):
+{{range .Allowed}}
 # - {{.Kind}}/{{.Name}}
 {{end}}
 
@@ -774,31 +778,40 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXPECTED_VIOLATIONS="$SCRIPT_DIR/artifacts/expected_violations.txt"
 
+ERRORS=0
+
 # Check that all expected violations are mentioned in the output
-MISSING=0
+echo "Checking for expected violations..."
 while IFS= read -r violation; do
     # Extract resource name from Kind/Name format
     RESOURCE_NAME=$(echo "$violation" | cut -d'/' -f2)
     if ! echo "$MODEL_OUTPUT" | grep -qi "$RESOURCE_NAME"; then
-        echo "Missing violation: $violation"
-        MISSING=$((MISSING + 1))
+        echo "FAIL: Missing violation - $violation was not identified"
+        ERRORS=$((ERRORS + 1))
+    else
+        echo "OK: $violation correctly identified as violation"
     fi
 done < "$EXPECTED_VIOLATIONS"
 
-if [ $MISSING -gt 0 ]; then
-    echo "Failed: $MISSING expected violations not identified"
-    exit 1
-fi
-
-# Check for false positives (allowed resources marked as violations)
+# Check for false positives (compliant resources incorrectly marked as violations)
+echo ""
+echo "Checking for false positives..."
 {{range .Allowed}}
-if echo "$MODEL_OUTPUT" | grep -qi "{{.Name}}.*violat"; then
-    echo "False positive: {{.Kind}}/{{.Name}} was incorrectly marked as a violation"
-    # This is a warning, not a failure
+if echo "$MODEL_OUTPUT" | grep -qi "{{.Name}}.*violat\|violat.*{{.Name}}"; then
+    echo "FAIL: False positive - {{.Kind}}/{{.Name}} incorrectly marked as violation"
+    ERRORS=$((ERRORS + 1))
+else
+    echo "OK: {{.Kind}}/{{.Name}} correctly not flagged"
 fi
 {{end}}
 
-echo "Verification passed: All expected violations were correctly identified"
+echo ""
+if [ $ERRORS -gt 0 ]; then
+    echo "Verification failed: $ERRORS error(s)"
+    exit 1
+fi
+
+echo "Verification passed: All violations detected, no false positives"
 exit 0
 `))
 
@@ -847,6 +860,7 @@ func generateTaskYAML(taskDir string, task BenchmarkTask) error {
 			{"prompt": prompt},
 		},
 		"setup":      "setup.sh",
+		"verifier":   "verify.sh",
 		"cleanup":    "cleanup.sh",
 		"difficulty": "medium",
 		"expect":     expectPatterns,
