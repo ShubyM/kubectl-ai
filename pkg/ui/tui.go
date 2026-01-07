@@ -444,8 +444,10 @@ func (m model) handleSessionPickerKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 		// Cancel picker
 		m.showSessionPicker = false
 		m.sessionPickerItems = nil
-		m.agent.Input <- &api.SessionPickerResponse{Cancelled: true}
-		return m, nil
+		return m, func() tea.Msg {
+			m.agent.Input <- &api.SessionPickerResponse{Cancelled: true}
+			return nil
+		}
 
 	case tea.KeyEnter:
 		// Select session
@@ -453,7 +455,10 @@ func (m model) handleSessionPickerKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 			selected := m.sessionPickerItems[m.sessionPickerIndex]
 			m.showSessionPicker = false
 			m.sessionPickerItems = nil
-			m.agent.Input <- &api.SessionPickerResponse{SessionID: selected.ID}
+			return m, func() tea.Msg {
+				m.agent.Input <- &api.SessionPickerResponse{SessionID: selected.ID}
+				return nil
+			}
 		}
 		return m, nil
 
@@ -495,7 +500,11 @@ func (m model) handleEnter() (tea.Model, tea.Cmd) {
 	if m.cachedState == api.AgentStateWaitingForInput && len(m.messages) > 0 {
 		if lastMsg := m.messages[len(m.messages)-1]; lastMsg.Type == api.MessageTypeUserChoiceRequest {
 			if _, ok := m.list.SelectedItem().(item); ok {
-				m.agent.Input <- &api.UserChoiceResponse{Choice: m.list.Index() + 1}
+				choice := m.list.Index() + 1
+				return m, func() tea.Msg {
+					m.agent.Input <- &api.UserChoiceResponse{Choice: choice}
+					return nil
+				}
 			}
 			return m, nil
 		}
@@ -534,11 +543,13 @@ func (m model) handleEnter() (tea.Model, tea.Cmd) {
 	m.refreshViewport()
 	m.viewport.GotoBottom()
 
-	m.agent.Input <- &api.UserInputResponse{Query: value}
 	m.textinput.Reset()
 	m.thinkingStart = time.Now()
 
-	return m, nil
+	return m, func() tea.Msg {
+		m.agent.Input <- &api.UserInputResponse{Query: value}
+		return nil
+	}
 }
 
 func (m *model) handleMessage(msg *api.Message) (tea.Model, tea.Cmd) {
@@ -804,9 +815,9 @@ func (m model) renderState(state api.AgentState) string {
 		if !m.thinkingStart.IsZero() {
 			elapsed = " " + formatDuration(time.Since(m.thinkingStart))
 		}
-		return spinnerStyle.Render(m.spinner.View()) + statusActiveStyle.Render(" Thinking...") + statusItemStyle.Render(elapsed)
+		return statusActiveStyle.Render("● Running") + statusItemStyle.Render(elapsed)
 	case api.AgentStateInitializing:
-		return spinnerStyle.Render(m.spinner.View()) + statusItemStyle.Render(" Initializing...")
+		return statusItemStyle.Render(" Initializing...")
 	case api.AgentStateWaitingForInput:
 		return statusActiveStyle.Render("● Ready")
 	case api.AgentStateIdle:
@@ -846,7 +857,14 @@ func (m model) renderInputArea() string {
 	inputContent := m.textinput.View()
 	var box string
 	if state == api.AgentStateRunning || state == api.AgentStateInitializing {
-		box = inputBoxDimStyle.Width(m.width - 4).Render(inputContent)
+		elapsed := ""
+		if !m.thinkingStart.IsZero() {
+			elapsed = " " + formatDuration(time.Since(m.thinkingStart))
+		}
+		content := spinnerStyle.Render(m.spinner.View()) + statusActiveStyle.Render(" Thinking...") + statusItemStyle.Render(elapsed)
+		// Ensure height matches input box (roughly) to prevent jump
+		content = lipgloss.NewStyle().Height(1).Render(content)
+		box = inputBoxDimStyle.Width(m.width - 4).Render(content)
 	} else {
 		box = inputBoxStyle.Width(m.width - 4).Render(inputContent)
 	}

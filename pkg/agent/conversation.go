@@ -463,6 +463,20 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 						c.addMessage(api.MessageSourceAgent, api.MessageTypeText, "It has been a pleasure assisting you. Have a great day!")
 						return
 					}
+
+					if sessionPickerResp, ok := userInput.(*api.SessionPickerResponse); ok {
+						if sessionPickerResp.Cancelled {
+							continue
+						}
+						if err := c.LoadSession(sessionPickerResp.SessionID); err != nil {
+							log.Error(err, "error loading session")
+							c.addMessage(api.MessageSourceAgent, api.MessageTypeError, "Error loading session: "+err.Error())
+						} else {
+							c.addMessage(api.MessageSourceAgent, api.MessageTypeText, fmt.Sprintf("Switched to session %s", sessionPickerResp.SessionID))
+						}
+						continue
+					}
+
 					query, ok := userInput.(*api.UserInputResponse)
 					if !ok {
 						log.Error(nil, "Received unexpected input from channel", "userInput", userInput)
@@ -865,25 +879,23 @@ func (c *Agent) handleMetaQuery(ctx context.Context, query string) (answer strin
 		if len(sessions) == 0 {
 			return "No sessions found.", true, nil
 		}
-		// Build markdown table
-		var sb strings.Builder
-		sb.WriteString("Available sessions:\n\n")
-		sb.WriteString("| ID | Created | Last Modified | Model | Messages |\n")
-		sb.WriteString("|---|---|---|---|---|\n")
-		for _, s := range sessions {
-			id := s.ID
-			if len(id) > 12 {
-				id = id[:12]
-			}
-			sb.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %d |\n",
-				id,
-				s.CreatedAt.Format("Jan 02 15:04"),
-				s.LastModified.Format("Jan 02 15:04"),
-				s.ModelID,
-				s.MessageCount))
+		// Add ```text so markdown doesn't wreck the format
+		availableSessions := "```text"
+		availableSessions += "Available sessions:\n\n"
+		availableSessions += "ID\t\t\tCreated\t\t\tLast Accessed\t\tModel\t\tProvider\n"
+		availableSessions += "--\t\t\t-------\t\t\t-------------\t\t-----\t\t--------\n"
+
+		for _, session := range sessions {
+			availableSessions += fmt.Sprintf("%s\t%s\t%s\t%s\t%s\n",
+				session.ID,
+				session.CreatedAt.Format("2006-01-02 15:04"),
+				session.LastModified.Format("2006-01-02 15:04"),
+				session.ModelID,
+				session.ProviderID)
 		}
-		sb.WriteString("\nUse `resume-session <id>` to switch sessions.")
-		return sb.String(), true, nil
+		// close the ```text box
+		availableSessions += "```"
+		return availableSessions, true, nil
 	}
 
 	if strings.HasPrefix(query, "resume-session") {
@@ -1454,24 +1466,24 @@ var modelContextWindows = []struct {
 	tokens  int64
 }{
 	// Gemini models
-	{"gemini-2.0", 1048576},  // 1M tokens
-	{"gemini-2.5", 1048576},  // 1M tokens
-	{"gemini-1.5-pro", 2097152}, // 2M tokens
+	{"gemini-2.0", 1048576},       // 1M tokens
+	{"gemini-2.5", 1048576},       // 1M tokens
+	{"gemini-1.5-pro", 2097152},   // 2M tokens
 	{"gemini-1.5-flash", 1048576}, // 1M tokens
-	{"gemini", 32768},        // 32k default for older Gemini
+	{"gemini", 32768},             // 32k default for older Gemini
 
 	// OpenAI models
-	{"gpt-4o", 128000},       // 128k tokens
-	{"gpt-4-turbo", 128000},  // 128k tokens
+	{"gpt-4o", 128000},      // 128k tokens
+	{"gpt-4-turbo", 128000}, // 128k tokens
 	{"gpt-4-32k", 32768},
 	{"gpt-4", 8192},
 	{"gpt-3.5-turbo-16k", 16384},
 	{"gpt-3.5", 4096},
 
 	// Claude models
-	{"claude-3", 200000},     // 200k tokens
-	{"claude-4", 200000},     // 200k tokens
-	{"claude-2", 100000},     // 100k tokens
+	{"claude-3", 200000}, // 200k tokens
+	{"claude-4", 200000}, // 200k tokens
+	{"claude-2", 100000}, // 100k tokens
 	{"claude", 100000},
 }
 
