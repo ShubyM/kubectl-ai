@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/user"
 	"strings"
 	"sync"
 	"time"
@@ -36,83 +35,58 @@ import (
 	"k8s.io/klog/v2"
 )
 
-// ASCII Art Logo
-
 const logo = `
- _          _               _   _             _ 
+ _          _               _   _             _
 | | ___   _| |__   ___  ___| |_| |       __ _(_)
 | |/ / | | | '_ \ / _ \/ __| __| |_____ / _  | |
 |   <| |_| | |_) |  __/ (__| |_| |_____| (_| | |
 |_|\_\\__,_|_.__/ \___|\___|\__|_|      \__,_|_|
-                                                
 `
 
 // Color palette - Google Material Design colors
 var (
 	colorPrimary   = lipgloss.Color("#8AB4F8") // Blue 200
 	colorSecondary = lipgloss.Color("#81C995") // Green 200
-	colorSuccess   = lipgloss.Color("#81C995") // Green 200
 	colorError     = lipgloss.Color("#F28B82") // Red 200
 	colorWarning   = lipgloss.Color("#FDD663") // Yellow 200
 	colorText      = lipgloss.Color("#E8EAED") // Grey 200
-	colorTextMuted = lipgloss.Color("#9AA0A6") // Grey 500
-	colorTextDim   = lipgloss.Color("#5F6368") // Grey 700
+	colorMuted     = lipgloss.Color("#9AA0A6") // Grey 500
+	colorDim       = lipgloss.Color("#5F6368") // Grey 700
 	colorBgSubtle  = lipgloss.Color("#303134") // Surface variant
 	colorBgCode    = lipgloss.Color("#1E1E1E") // Code background
 )
 
-// Pre-built styles (created once, reused)
+// Styles - consolidated for reuse
 var (
-	statusBarStyle    = lipgloss.NewStyle().Background(colorBgSubtle).Foreground(colorText)
-	statusItemStyle   = lipgloss.NewStyle().Foreground(colorTextMuted)
-	statusActiveStyle = lipgloss.NewStyle().Foreground(colorSuccess).Bold(true)
+	textStyle   = lipgloss.NewStyle().Foreground(colorText)
+	mutedStyle  = lipgloss.NewStyle().Foreground(colorMuted)
+	dimStyle    = lipgloss.NewStyle().Foreground(colorDim)
+	primaryText = lipgloss.NewStyle().Foreground(colorPrimary).Bold(true)
+	successText = lipgloss.NewStyle().Foreground(colorSecondary).Bold(true)
+	errorText   = lipgloss.NewStyle().Foreground(colorError).Bold(true)
+	warnText    = lipgloss.NewStyle().Foreground(colorWarning).Bold(true)
 
-	userMessageStyle = lipgloss.NewStyle().
-				BorderLeft(true).
-				BorderStyle(lipgloss.ThickBorder()).
-				BorderForeground(colorPrimary).
-				PaddingLeft(1).
-				MarginBottom(1)
+	statusBar = lipgloss.NewStyle().Background(colorBgSubtle).Foreground(colorText)
 
-	agentMessageStyle = lipgloss.NewStyle().
-				BorderLeft(true).
-				BorderStyle(lipgloss.ThickBorder()).
-				BorderForeground(colorSecondary).
-				PaddingLeft(1).
-				MarginBottom(1)
+	userMsg = lipgloss.NewStyle().
+		BorderLeft(true).BorderStyle(lipgloss.ThickBorder()).
+		BorderForeground(colorPrimary).PaddingLeft(1).MarginBottom(1)
+	agentMsg = lipgloss.NewStyle().
+			BorderLeft(true).BorderStyle(lipgloss.ThickBorder()).
+			BorderForeground(colorSecondary).PaddingLeft(1).MarginBottom(1)
 
-	userLabelStyle  = lipgloss.NewStyle().Foreground(colorPrimary).Bold(true)
-	agentLabelStyle = lipgloss.NewStyle().Foreground(colorSecondary).Bold(true)
-	timestampStyle  = lipgloss.NewStyle().Foreground(colorTextDim).Italic(true)
-
-	toolBoxStyle     = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorSecondary).Padding(0, 1).MarginBottom(1)
-	toolIconStyle    = lipgloss.NewStyle().Foreground(colorSecondary).Bold(true)
-	toolCommandStyle = lipgloss.NewStyle().Foreground(colorText).Background(colorBgCode).Padding(0, 1)
-
-	errorBoxStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorError).Padding(0, 1).MarginBottom(1)
-	errorStyle    = lipgloss.NewStyle().Foreground(colorError).Bold(true)
-
-	inputBoxStyle    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorPrimary).Padding(0, 1)
-	inputBoxDimStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorTextDim).Padding(0, 1)
-
-	spinnerStyle = lipgloss.NewStyle().Foreground(colorPrimary)
-	helpStyle    = lipgloss.NewStyle().Foreground(colorTextDim)
-
-	statusSepStyle       = lipgloss.NewStyle().Foreground(colorTextDim)
-	statusAppStyle       = lipgloss.NewStyle().Foreground(colorPrimary).Bold(true)
-	statusSessionStyle   = lipgloss.NewStyle().Foreground(colorTextMuted)
-	statusModelStyle     = lipgloss.NewStyle().Foreground(colorSecondary)
-	statusContextError   = lipgloss.NewStyle().Foreground(colorError)
-	statusContextWarning = lipgloss.NewStyle().Foreground(colorWarning)
-	dividerStyle         = lipgloss.NewStyle().Foreground(colorTextDim)
-	logoStyle            = lipgloss.NewStyle().Foreground(colorPrimary).Bold(true)
-
-	listTitleStyle    = lipgloss.NewStyle().Foreground(colorWarning).Bold(true).Padding(0, 0, 1, 0)
-	listItemStyle     = lipgloss.NewStyle().Foreground(colorTextMuted).PaddingLeft(2)
-	listSelectedStyle = lipgloss.NewStyle().Foreground(colorPrimary).Bold(true).PaddingLeft(0)
+	toolBox = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).BorderForeground(colorSecondary).
+		Padding(0, 1).MarginBottom(1)
+	errorBox = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).BorderForeground(colorError).
+			Padding(0, 1).MarginBottom(1)
+	inputBox    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorPrimary).Padding(0, 1)
+	inputBoxDim = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorDim).Padding(0, 1)
+	codeStyle   = lipgloss.NewStyle().Foreground(colorText).Background(colorBgCode).Padding(0, 1)
 )
 
-// item represents a choice in the list
+// List item for choice selection
 type item string
 
 func (i item) FilterValue() string { return "" }
@@ -122,36 +96,25 @@ type itemDelegate struct{}
 func (d itemDelegate) Height() int                             { return 1 }
 func (d itemDelegate) Spacing() int                            { return 0 }
 func (d itemDelegate) Update(_ tea.Msg, _ *list.Model) tea.Cmd { return nil }
-func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list.Item) {
-	i, ok := listItem.(item)
+func (d itemDelegate) Render(w io.Writer, m list.Model, idx int, li list.Item) {
+	s, ok := li.(item)
 	if !ok {
 		return
 	}
-	str := string(i)
-	if index == m.Index() {
-		fmt.Fprint(w, listSelectedStyle.Render("> "+str))
+	if idx == m.Index() {
+		fmt.Fprint(w, primaryText.Render("> "+string(s)))
 	} else {
-		fmt.Fprint(w, listItemStyle.Render("  "+str))
+		fmt.Fprint(w, mutedStyle.PaddingLeft(2).Render(string(s)))
 	}
 }
 
-var cachedUsername string
-var usernameOnce sync.Once
+// Username caching
+var (
+	cachedUsername string
+	usernameOnce   sync.Once
+)
 
-func getCurrentUsername() string {
-	usernameOnce.Do(func() {
-		if u, err := user.Current(); err == nil {
-			cachedUsername = u.Username
-		} else if username := os.Getenv("USER"); username != "" {
-			cachedUsername = username
-		} else {
-			cachedUsername = "You"
-		}
-	})
-	return cachedUsername
-}
-
-// TUI is a rich terminal user interface for the agent.
+// TUI is the terminal user interface for the agent.
 type TUI struct {
 	program *tea.Program
 	agent   *agent.Agent
@@ -166,13 +129,10 @@ func NewTUI(agent *agent.Agent) *TUI {
 
 func (u *TUI) Run(ctx context.Context) error {
 	// Suppress stderr to prevent klog from breaking TUI
-	originalStderr := os.Stderr
 	if devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0); err == nil {
+		orig := os.Stderr
 		os.Stderr = devNull
-		defer func() {
-			os.Stderr = originalStderr
-			devNull.Close()
-		}()
+		defer func() { os.Stderr = orig; devNull.Close() }()
 	}
 	klog.SetOutput(io.Discard)
 	klog.LogToStderr(false)
@@ -197,9 +157,22 @@ func (u *TUI) Run(ctx context.Context) error {
 
 func (u *TUI) ClearScreen() {}
 
+type sessionListMsg []api.SessionInfo
+
+func (m *model) fetchSessions() tea.Msg {
+	sessions, err := m.agent.ListSessions()
+	if err != nil {
+		return api.Message{
+			Type:    api.MessageTypeError,
+			Payload: fmt.Sprintf("Failed to list sessions: %v", err),
+		}
+	}
+	return sessionListMsg(sessions)
+}
+
 type tickMsg time.Time
 
-// renderCache holds cached rendered messages
+// Render cache for markdown
 type renderCache struct {
 	mu       sync.RWMutex
 	cache    map[string]string
@@ -214,11 +187,11 @@ func newRenderCache() *renderCache {
 func (rc *renderCache) get(id string) (string, bool) {
 	rc.mu.RLock()
 	defer rc.mu.RUnlock()
-	content, ok := rc.cache[id]
-	return content, ok
+	v, ok := rc.cache[id]
+	return v, ok
 }
 
-func (rc *renderCache) set(id string, content string) {
+func (rc *renderCache) set(id, content string) {
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
 	rc.cache[id] = content
@@ -233,47 +206,36 @@ func (rc *renderCache) getRenderer(width int) (*glamour.TermRenderer, error) {
 		rc.width = width
 		rc.renderer = nil
 	}
-
 	if rc.renderer == nil {
-		var err error
-		rc.renderer, err = glamour.NewTermRenderer(
-			glamour.WithStylePath("dark"),
-			glamour.WithWordWrap(width),
-		)
+		r, err := glamour.NewTermRenderer(glamour.WithStylePath("dark"), glamour.WithWordWrap(width))
 		if err != nil {
 			return nil, err
 		}
+		rc.renderer = r
 	}
 	return rc.renderer, nil
 }
 
+// Model state
 type model struct {
-	viewport    viewport.Model
-	textinput   textinput.Model
-	spinner     spinner.Model
-	list        list.Model
-	agent       *agent.Agent
-	messages    []*api.Message
-	renderCache *renderCache
-
-	// Cached values to avoid repeated calls
-	cachedState   api.AgentState
-	cachedSession *api.Session
-
-	quitting      bool
-	width, height int
-	thinkingStart time.Time
-	startTime     time.Time
-
-	// Pre-rendered content cache
-	viewportContent   string
-	viewportDirty     bool
-	lastRenderedWidth int
-
-	// Session picker state
-	showSessionPicker  bool
-	sessionPickerItems []api.SessionInfo
-	sessionPickerIndex int
+	agent      *agent.Agent
+	viewport   viewport.Model
+	input      textinput.Model
+	spinner    spinner.Model
+	list       list.Model
+	cache      *renderCache
+	messages   []*api.Message
+	width      int
+	height     int
+	dirty      bool
+	quitting   bool
+	thinkStart time.Time
+	// Choice mode tracking
+	inChoiceMode   bool
+	choicePrompt   string
+	choiceOptionID string // Track which choice request we initialized for
+	choiceType     string // "confirm" or "session"
+	sessionIDs     []string
 }
 
 func newModel(agent *agent.Agent) model {
@@ -283,15 +245,15 @@ func newModel(agent *agent.Agent) model {
 	ti.Prompt = ""
 	ti.CharLimit = 4096
 	ti.Width = 80
-	ti.TextStyle = lipgloss.NewStyle().Foreground(colorText)
-	ti.PlaceholderStyle = lipgloss.NewStyle().Foreground(colorTextDim)
-	ti.Cursor.Style = lipgloss.NewStyle().Foreground(colorPrimary)
+	ti.TextStyle = textStyle
+	ti.PlaceholderStyle = dimStyle
+	ti.Cursor.Style = primaryText
 
 	sp := spinner.New()
 	sp.Spinner = spinner.MiniDot
-	sp.Style = spinnerStyle
+	sp.Style = primaryText
 
-	l := list.New([]list.Item{}, itemDelegate{}, 40, 5)
+	l := list.New(nil, itemDelegate{}, 40, 5)
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(false)
 	l.SetShowHelp(false)
@@ -302,53 +264,46 @@ func newModel(agent *agent.Agent) model {
 	vp.MouseWheelEnabled = true
 
 	return model{
-		agent:         agent,
-		textinput:     ti,
-		viewport:      vp,
-		spinner:       sp,
-		list:          l,
-		renderCache:   newRenderCache(),
-		cachedState:   api.AgentStateIdle,
-		startTime:     time.Now(),
-		viewportDirty: true,
+		agent:    agent,
+		input:    ti,
+		viewport: vp,
+		spinner:  sp,
+		list:     l,
+		cache:    newRenderCache(),
+		dirty:    true,
 	}
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(textinput.Blink, m.spinner.Tick, m.tickCmd())
+	return tea.Batch(textinput.Blink, m.spinner.Tick, m.tick())
 }
 
-func (m model) tickCmd() tea.Cmd {
-	return tea.Tick(time.Second, func(t time.Time) tea.Msg {
-		return tickMsg(t)
-	})
+func (m model) tick() tea.Cmd {
+	return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		m.viewportDirty = true
-		return m.handleResize(), nil
+		m.width, m.height = msg.Width, msg.Height
+		m.dirty = true
+		m.resize()
+		return m, nil
 
 	case tea.KeyMsg:
-		return m.handleKeypress(msg)
+		return m.handleKey(msg)
 
 	case tea.MouseMsg:
-		// Only handle wheel events
 		switch msg.Button {
 		case tea.MouseButtonWheelUp:
 			m.viewport.ScrollUp(3)
-			return m, nil
 		case tea.MouseButtonWheelDown:
 			m.viewport.ScrollDown(3)
-			return m, nil
 		}
 		return m, nil
 
 	case *api.Message:
-		return m.handleMessage(msg)
+		return m.handleAgentMsg(msg)
 
 	case spinner.TickMsg:
 		var cmd tea.Cmd
@@ -356,219 +311,204 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case tickMsg:
-		// Only tick if we're in a state that needs time updates
-		if m.cachedState == api.AgentStateRunning || m.cachedState == api.AgentStateInitializing {
-			return m, m.tickCmd()
-		}
-		return m, m.tickCmd()
-	}
+		return m, m.tick()
 
+	case sessionListMsg:
+		if len(msg) == 0 {
+			m.messages = append(m.messages, &api.Message{
+				Source:    api.MessageSourceAgent,
+				Type:      api.MessageTypeText,
+				Payload:   "No sessions found.",
+				Timestamp: time.Now(),
+			})
+			m.dirty = true
+			m.refresh()
+			m.viewport.GotoBottom()
+			return m, nil
+		}
+
+		items := make([]list.Item, len(msg))
+		ids := make([]string, len(msg))
+		for i, s := range msg {
+			label := fmt.Sprintf("%s (%s) • %d msgs", s.ID, s.ModelID, s.MessageCount)
+			if s.Name != "" {
+				label = fmt.Sprintf("%s (%s) • %s • %d msgs", s.Name, s.ModelID, s.ID, s.MessageCount)
+			}
+			items[i] = item(label)
+			ids[i] = s.ID
+		}
+		m.list.SetItems(items)
+		m.list.Select(0)
+		m.inChoiceMode = true
+		m.choicePrompt = "Select a session to resume"
+		m.choiceOptionID = "manual-session-picker"
+		m.choiceType = "session"
+		m.sessionIDs = ids
+		m.dirty = true
+		m.refresh()
+		m.viewport.GotoBottom()
+		return m, nil
+	}
 	return m, nil
 }
 
-func (m model) isWaitingForChoice() bool {
-	if m.cachedState != api.AgentStateWaitingForInput || len(m.messages) == 0 {
-		return false
-	}
-	lastMsg := m.messages[len(m.messages)-1]
-	return lastMsg.Type == api.MessageTypeUserChoiceRequest
-}
-
-func (m model) handleResize() model {
-	fixedHeight := 7 // status + 2 dividers + input(3) + help
-	contentHeight := m.height - fixedHeight
-	if contentHeight < 5 {
-		contentHeight = 5
-	}
-
+func (m *model) resize() {
 	m.viewport.Width = m.width - 2
-	m.viewport.Height = contentHeight
-	m.textinput.Width = m.width - 6
+	m.input.Width = m.width - 6
 	m.list.SetWidth(m.width - 4)
-
-	if m.viewportDirty || m.lastRenderedWidth != m.width {
-		m.refreshViewport()
-		m.lastRenderedWidth = m.width
-	}
+	m.updateViewportHeight()
+	m.refresh()
 	m.viewport.GotoBottom()
-
-	return m
 }
 
-func (m model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Handle session picker navigation
-	if m.showSessionPicker {
-		return m.handleSessionPickerKeypress(msg)
+func (m *model) updateViewportHeight() {
+	// Layout: status(1) + 2 dividers(2) + input(3) + help(1) = 7
+	contentH := m.height - 7
+	if contentH < 5 {
+		contentH = 5
 	}
+	m.viewport.Height = contentH
+}
 
-	// Handle choice selection if active
-	if m.isWaitingForChoice() {
-		// Allow quitting even during choice
-		switch msg.Type {
-		case tea.KeyCtrlC, tea.KeyCtrlD:
-			m.quitting = true
-			return m, tea.Quit
-		case tea.KeyEnter:
-			return m.handleEnter()
-		}
-
-		// Forward other keys to list (up/down/j/k navigation)
-		var cmd tea.Cmd
-		m.list, cmd = m.list.Update(msg)
-		return m, cmd
-	}
-
+func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyCtrlC, tea.KeyCtrlD:
 		m.quitting = true
 		return m, tea.Quit
-
 	case tea.KeyEsc:
-		m.textinput.Reset()
+		m.input.Reset()
 		return m, nil
-
 	case tea.KeyEnter:
 		return m.handleEnter()
-
 	case tea.KeyUp:
+		if m.inChoiceMode {
+			var cmd tea.Cmd
+			m.list, cmd = m.list.Update(msg)
+			m.dirty = true
+			m.refresh()
+			return m, cmd
+		}
 		m.viewport.ScrollUp(1)
-		return m, nil
 	case tea.KeyDown:
+		if m.inChoiceMode {
+			var cmd tea.Cmd
+			m.list, cmd = m.list.Update(msg)
+			m.dirty = true
+			m.refresh()
+			return m, cmd
+		}
 		m.viewport.ScrollDown(1)
-		return m, nil
 	case tea.KeyPgUp:
 		m.viewport.ScrollUp(m.viewport.Height / 2)
-		return m, nil
 	case tea.KeyPgDown:
 		m.viewport.ScrollDown(m.viewport.Height / 2)
-		return m, nil
-	}
-
-	switch msg.String() {
-	case "ctrl+u":
-		m.viewport.ScrollUp(m.viewport.Height / 2)
-		return m, nil
-	case "ctrl+d":
-		m.viewport.ScrollDown(m.viewport.Height / 2)
-		return m, nil
-	}
-
-	var cmd tea.Cmd
-	m.textinput, cmd = m.textinput.Update(msg)
-	return m, cmd
-}
-
-func (m model) handleSessionPickerKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyCtrlC, tea.KeyCtrlD:
-		m.quitting = true
-		return m, tea.Quit
-
-	case tea.KeyEsc:
-		// Cancel picker
-		m.showSessionPicker = false
-		m.sessionPickerItems = nil
-		return m, func() tea.Msg {
-			m.agent.Input <- &api.SessionPickerResponse{Cancelled: true}
-			return nil
-		}
-
-	case tea.KeyEnter:
-		// Select session
-		if len(m.sessionPickerItems) > 0 {
-			selected := m.sessionPickerItems[m.sessionPickerIndex]
-			m.showSessionPicker = false
-			m.sessionPickerItems = nil
-			return m, func() tea.Msg {
-				m.agent.Input <- &api.SessionPickerResponse{SessionID: selected.ID}
-				return nil
+	default:
+		switch msg.String() {
+		case "ctrl+u":
+			m.viewport.ScrollUp(m.viewport.Height / 2)
+		case "ctrl+d":
+			m.viewport.ScrollDown(m.viewport.Height / 2)
+		case "j":
+			if m.inChoiceMode {
+				var cmd tea.Cmd
+				m.list, cmd = m.list.Update(tea.KeyMsg{Type: tea.KeyDown})
+				m.dirty = true
+				m.refresh()
+				return m, cmd
 			}
+			var cmd tea.Cmd
+			m.input, cmd = m.input.Update(msg)
+			return m, cmd
+		case "k":
+			if m.inChoiceMode {
+				var cmd tea.Cmd
+				m.list, cmd = m.list.Update(tea.KeyMsg{Type: tea.KeyUp})
+				m.dirty = true
+				m.refresh()
+				return m, cmd
+			}
+			var cmd tea.Cmd
+			m.input, cmd = m.input.Update(msg)
+			return m, cmd
+		default:
+			var cmd tea.Cmd
+			m.input, cmd = m.input.Update(msg)
+			return m, cmd
 		}
-		return m, nil
-
-	case tea.KeyUp:
-		if m.sessionPickerIndex > 0 {
-			m.sessionPickerIndex--
-		}
-		return m, nil
-
-	case tea.KeyDown:
-		if m.sessionPickerIndex < len(m.sessionPickerItems)-1 {
-			m.sessionPickerIndex++
-		}
-		return m, nil
 	}
-
-	// j/k vim-style navigation
-	switch msg.String() {
-	case "j":
-		if m.sessionPickerIndex < len(m.sessionPickerItems)-1 {
-			m.sessionPickerIndex++
-		}
-		return m, nil
-	case "k":
-		if m.sessionPickerIndex > 0 {
-			m.sessionPickerIndex--
-		}
-		return m, nil
-	}
-
 	return m, nil
 }
 
-func (m model) handleEnter() (tea.Model, tea.Cmd) {
-	session := m.agent.GetSession()
-	m.cachedState = session.AgentState
-	m.cachedSession = session
-
-	if m.cachedState == api.AgentStateWaitingForInput && len(m.messages) > 0 {
-		if lastMsg := m.messages[len(m.messages)-1]; lastMsg.Type == api.MessageTypeUserChoiceRequest {
-			if _, ok := m.list.SelectedItem().(item); ok {
+func (m *model) handleEnter() (tea.Model, tea.Cmd) {
+	// Handle choice selection
+	if m.inChoiceMode {
+		if _, ok := m.list.SelectedItem().(item); ok {
+			if m.choiceType == "session" {
+				idx := m.list.Index()
+				if idx >= 0 && idx < len(m.sessionIDs) {
+					selectedID := m.sessionIDs[idx]
+					m.inChoiceMode = false
+					m.choicePrompt = ""
+					m.choiceOptionID = ""
+					// Don't reset choiceType/sessionIDs yet or it might race, but actually we are done.
+					m.dirty = true
+					m.refresh()
+					return m, func() tea.Msg {
+						m.agent.Input <- &api.SessionPickerResponse{SessionID: selectedID}
+						return nil
+					}
+				}
+			} else {
 				choice := m.list.Index() + 1
+				m.inChoiceMode = false
+				m.choicePrompt = ""
+				m.choiceOptionID = ""
+				m.dirty = true
+				m.refresh()
 				return m, func() tea.Msg {
 					m.agent.Input <- &api.UserChoiceResponse{Choice: choice}
 					return nil
 				}
 			}
-			return m, nil
 		}
+		return m, nil
 	}
 
-	value := strings.TrimSpace(m.textinput.Value())
+	value := strings.TrimSpace(m.input.Value())
 	if value == "" {
 		return m, nil
 	}
 
-	// Intercept "sessions" command for interactive picker
-	if value == "sessions" {
-		m.textinput.Reset()
-		sessions, err := m.agent.ListSessions()
-		if err != nil {
-			klog.FromContext(context.Background()).Error(err, "failed to list sessions")
-			return m, nil
-		}
-		if len(sessions) == 0 {
-			return m, nil
-		}
-		m.showSessionPicker = true
-		m.sessionPickerItems = sessions
-		m.sessionPickerIndex = 0
-		return m, nil
-	}
-
-	userMsg := &api.Message{
+	// Add user message
+	m.messages = append(m.messages, &api.Message{
 		Source:    api.MessageSourceUser,
 		Type:      api.MessageTypeText,
 		Payload:   value,
 		Timestamp: time.Now(),
-	}
-	m.messages = append(m.messages, userMsg)
-	m.viewportDirty = true
-	m.refreshViewport()
-	m.viewport.GotoBottom()
+	})
 
-	m.textinput.Reset()
-	m.thinkingStart = time.Now()
+	m.input.Reset()
+
+	// Intercept "sessions" command
+	if value == "sessions" {
+		m.dirty = true
+		m.refresh()
+		m.viewport.GotoBottom()
+		return m, m.fetchSessions
+	}
+
+	// Add user message
+	m.messages = append(m.messages, &api.Message{
+		Source:    api.MessageSourceUser,
+		Type:      api.MessageTypeText,
+		Payload:   value,
+		Timestamp: time.Now(),
+	})
+	m.dirty = true
+	m.refresh()
+	m.viewport.GotoBottom()
+	m.input.Reset()
+	m.thinkStart = time.Now()
 
 	return m, func() tea.Msg {
 		m.agent.Input <- &api.UserInputResponse{Query: value}
@@ -576,93 +516,134 @@ func (m model) handleEnter() (tea.Model, tea.Cmd) {
 	}
 }
 
-func (m *model) handleMessage(msg *api.Message) (tea.Model, tea.Cmd) {
+func (m *model) handleAgentMsg(_ *api.Message) (tea.Model, tea.Cmd) {
 	session := m.agent.GetSession()
 	m.messages = session.AllMessages()
-	m.cachedState = session.AgentState
-	m.cachedSession = session
-	m.viewportDirty = true
+	m.dirty = true
 
-	m.refreshViewport()
+	// Check if we're entering choice mode
+	if session.AgentState == api.AgentStateWaitingForInput && len(m.messages) > 0 {
+		last := m.messages[len(m.messages)-1]
+		switch last.Type {
+		case api.MessageTypeUserChoiceRequest:
+			// Only initialize list if this is a new choice request
+			if last.ID != m.choiceOptionID {
+				if req, ok := last.Payload.(*api.UserChoiceRequest); ok {
+					items := make([]list.Item, len(req.Options))
+					for i, opt := range req.Options {
+						items[i] = item(opt.Label)
+					}
+					m.list.SetItems(items)
+					m.list.Select(0)
+					m.inChoiceMode = true
+					m.choicePrompt = req.Prompt
+					m.choiceOptionID = last.ID
+					m.choiceType = "confirm"
+				}
+			}
+		case api.MessageTypeSessionPickerRequest:
+			if last.ID != m.choiceOptionID {
+				if req, ok := last.Payload.(*api.SessionPickerRequest); ok {
+					items := make([]list.Item, len(req.Sessions))
+					ids := make([]string, len(req.Sessions))
+					for i, s := range req.Sessions {
+						label := fmt.Sprintf("%s (%s) • %d msgs", s.ID, s.ModelID, s.MessageCount)
+						if s.Name != "" {
+							label = fmt.Sprintf("%s (%s) • %s • %d msgs", s.Name, s.ModelID, s.ID, s.MessageCount)
+						}
+						items[i] = item(label)
+						ids[i] = s.ID
+					}
+					m.list.SetItems(items)
+					m.list.Select(0)
+					m.inChoiceMode = true
+					m.choicePrompt = "Select a session to resume"
+					m.choiceOptionID = last.ID
+					m.choiceType = "session"
+					m.sessionIDs = ids
+				}
+			}
+		}
+	} else {
+		// Clear choice mode if we're not in waiting state
+		m.inChoiceMode = false
+		m.choicePrompt = ""
+		m.choiceOptionID = ""
+	}
+
+	m.refresh()
 	m.viewport.GotoBottom()
 
-	if m.cachedState == api.AgentStateRunning || m.cachedState == api.AgentStateInitializing {
+	if session.AgentState == api.AgentStateRunning || session.AgentState == api.AgentStateInitializing {
 		return m, m.spinner.Tick
 	}
-
-	// Handle choice request list initialization
-	if msg.Type == api.MessageTypeUserChoiceRequest {
-		if choiceReq, ok := msg.Payload.(*api.UserChoiceRequest); ok {
-			items := make([]list.Item, len(choiceReq.Options))
-			for i, opt := range choiceReq.Options {
-				items[i] = item(opt.Label)
-			}
-			m.list.SetItems(items)
-			// Reset selection
-			m.list.Select(0)
-		}
-	}
-
 	return m, nil
 }
 
-func (m *model) refreshViewport() {
-	if !m.viewportDirty && m.lastRenderedWidth == m.viewport.Width {
+func (m *model) refresh() {
+	if !m.dirty {
 		return
 	}
-	m.viewportContent = m.renderAllMessages()
-	m.viewport.SetContent(m.viewportContent)
-	m.viewportDirty = false
-	m.lastRenderedWidth = m.viewport.Width
+	m.viewport.SetContent(m.renderMessages())
+	m.dirty = false
 }
 
-func (m model) renderAllMessages() string {
-	if len(m.messages) == 0 {
-		return lipgloss.JoinVertical(lipgloss.Left,
-			"",
-			logoStyle.Render(logo),
-			"",
-			lipgloss.NewStyle().PaddingLeft(1).Foreground(colorTextMuted).Render("Your AI-powered Kubernetes assistant"),
-			lipgloss.NewStyle().PaddingLeft(1).Foreground(colorTextDim).Render("Type a message to get started"),
-			"",
-		)
-	}
-
+func (m model) renderMessages() string {
 	var sb strings.Builder
-	renderWidth := m.viewport.Width - 6
-	if renderWidth > 90 {
-		renderWidth = 90
-	}
-	if renderWidth < 40 {
-		renderWidth = 40
-	}
 
-	renderer, err := m.renderCache.getRenderer(renderWidth)
-	if err != nil {
-		return "Error rendering messages"
-	}
-
-	for _, msg := range m.messages {
-		if rendered := m.renderMessage(msg, renderer, renderWidth); rendered != "" {
-			sb.WriteString(rendered)
+	if len(m.messages) == 0 {
+		sb.WriteString(fmt.Sprintf("\n%s\n\n%s\n%s\n",
+			primaryText.Render(logo),
+			mutedStyle.PaddingLeft(1).Render("Your AI-powered Kubernetes assistant"),
+			dimStyle.PaddingLeft(1).Render("Type a message to get started")))
+	} else {
+		width := min(m.viewport.Width-6, 90)
+		if width < 40 {
+			width = 40
 		}
+
+		renderer, err := m.cache.getRenderer(width)
+		if err != nil {
+			return "Error rendering messages"
+		}
+
+		for _, msg := range m.messages {
+			if s := m.renderMessage(msg, renderer, width); s != "" {
+				sb.WriteString(s)
+			}
+		}
+	}
+
+	// Render choice picker inline at the end of messages
+	if m.inChoiceMode {
+		sb.WriteString("\n")
+		sb.WriteString(warnText.Render("? " + m.choicePrompt))
+		sb.WriteString("\n\n")
+		sb.WriteString(m.list.View())
+		sb.WriteString("\n")
 	}
 
 	return sb.String()
 }
 
-func (m model) renderMessage(msg *api.Message, renderer *glamour.TermRenderer, width int) string {
+func (m model) renderMessage(msg *api.Message, r *glamour.TermRenderer, w int) string {
+	// Skip certain message types
 	if msg.Type == api.MessageTypeUserInputRequest {
-		if payload, ok := msg.Payload.(string); ok && payload == ">>>" {
+		if p, ok := msg.Payload.(string); ok && p == ">>>" {
 			return ""
 		}
 	}
 	if msg.Type == api.MessageTypeToolCallResponse {
 		return ""
 	}
+	// Skip choice requests - they're rendered in the input area instead
+	if msg.Type == api.MessageTypeUserChoiceRequest || msg.Type == api.MessageTypeSessionPickerRequest {
+		return ""
+	}
 
+	// Check cache (except tool calls which show status)
 	if msg.ID != "" && msg.Type != api.MessageTypeToolCallRequest {
-		if cached, ok := m.renderCache.get(msg.ID); ok {
+		if cached, ok := m.cache.get(msg.ID); ok {
 			return cached
 		}
 	}
@@ -670,351 +651,172 @@ func (m model) renderMessage(msg *api.Message, renderer *glamour.TermRenderer, w
 	var result string
 	switch msg.Type {
 	case api.MessageTypeToolCallRequest:
-		result = m.renderToolCall(msg, width)
+		result = m.renderToolCall(msg, w)
 	case api.MessageTypeError:
-		result = m.renderError(msg, width)
-	case api.MessageTypeUserChoiceRequest:
-		result = m.renderChoiceRequest(msg)
+		result = m.renderError(msg, w)
 	default:
-		result = m.renderTextMessage(msg, renderer, width)
+		result = m.renderTextMsg(msg, r, w)
 	}
 
+	// Cache result
 	if msg.ID != "" && result != "" && msg.Type != api.MessageTypeToolCallRequest {
-		m.renderCache.set(msg.ID, result)
+		m.cache.set(msg.ID, result)
 	}
-
 	return result
 }
 
-func (m model) renderTextMessage(msg *api.Message, renderer *glamour.TermRenderer, width int) string {
+func (m model) renderTextMsg(msg *api.Message, r *glamour.TermRenderer, w int) string {
 	payload, ok := msg.Payload.(string)
 	if !ok {
 		return ""
 	}
 
-	timestamp := ""
+	ts := ""
 	if !msg.Timestamp.IsZero() {
-		timestamp = timestampStyle.Render(msg.Timestamp.Format("15:04"))
+		ts = dimStyle.Italic(true).Render(" " + msg.Timestamp.Format("15:04"))
 	}
 
 	switch msg.Source {
 	case api.MessageSourceUser:
-		label := userLabelStyle.Render("You")
-		if timestamp != "" {
-			label += " " + timestamp
-		}
-		content := lipgloss.NewStyle().Foreground(colorText).Width(width).Render(payload)
-		return userMessageStyle.Width(width+2).Render(label+"\n"+content) + "\n"
-
+		label := primaryText.Render("You") + ts
+		content := textStyle.Width(w).Render(payload)
+		return userMsg.Width(w+2).Render(label+"\n"+content) + "\n"
 	case api.MessageSourceModel, api.MessageSourceAgent:
-		label := agentLabelStyle.Render("kubectl-ai")
-		if timestamp != "" {
-			label += " " + timestamp
-		}
-		rendered, err := renderer.Render(payload)
-		if err != nil {
-			rendered = payload
-		}
-		rendered = strings.TrimSpace(rendered)
-		return agentMessageStyle.Width(width+2).Render(label+"\n"+rendered) + "\n"
+		label := successText.Render("kubectl-ai") + ts
+		rendered, _ := r.Render(payload)
+		return agentMsg.Width(w+2).Render(label+"\n"+strings.TrimSpace(rendered)) + "\n"
 	}
-
 	return ""
 }
 
-func (m model) renderToolCall(msg *api.Message, width int) string {
+func (m model) renderToolCall(msg *api.Message, w int) string {
 	payload, ok := msg.Payload.(string)
 	if !ok {
 		return ""
 	}
-	icon := toolIconStyle.Render("⚡")
-	status := lipgloss.NewStyle().Foreground(colorSecondary).Render("Running")
-	command := toolCommandStyle.Render(payload)
-	content := icon + " " + status + "\n" + command
-	return toolBoxStyle.Width(width).Render(content) + "\n"
+	content := successText.Render("⚡ Running") + "\n" + codeStyle.Render(payload)
+	return toolBox.Width(w).Render(content) + "\n"
 }
 
-func (m model) renderError(msg *api.Message, width int) string {
+func (m model) renderError(msg *api.Message, w int) string {
 	payload, ok := msg.Payload.(string)
 	if !ok {
 		return ""
 	}
-	icon := errorStyle.Render("✗")
-	label := errorStyle.Render("Error")
-	content := lipgloss.NewStyle().Foreground(colorError).Width(width - 4).Render(payload)
-	return errorBoxStyle.Width(width).Render(icon+" "+label+"\n"+content) + "\n"
-}
-
-func (m model) renderChoiceRequest(msg *api.Message) string {
-	choiceReq, ok := msg.Payload.(*api.UserChoiceRequest)
-	if !ok {
-		return ""
-	}
-	return lipgloss.NewStyle().Foreground(colorWarning).Bold(true).Render("? "+choiceReq.Prompt) + "\n\n"
+	content := errorText.Render("✗ Error") + "\n" + errorText.Render(payload)
+	return errorBox.Width(w).Render(content) + "\n"
 }
 
 func (m model) View() string {
 	if m.quitting {
-		return lipgloss.NewStyle().Foreground(colorTextMuted).Padding(1).Render("Goodbye!")
-	}
-
-	// Cache session for this render
-	if m.cachedSession == nil {
-		m.cachedSession = m.agent.GetSession()
-		m.cachedState = m.cachedSession.AgentState
-	}
-
-	// Show session picker overlay if active
-	if m.showSessionPicker {
-		return lipgloss.JoinVertical(lipgloss.Left,
-			m.renderStatusBar(),
-			m.renderDivider(),
-			m.renderSessionPicker(),
-			m.renderDivider(),
-			m.renderSessionPickerHelp(),
-		)
+		return mutedStyle.Padding(1).Render("Goodbye!")
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left,
-		m.renderStatusBar(),
-		m.renderDivider(),
+		m.viewStatus(),
+		m.viewDivider(),
 		lipgloss.NewStyle().PaddingLeft(1).Render(m.viewport.View()),
-		m.renderDivider(),
-		m.renderInputArea(),
-		m.renderHelp(),
+		m.viewDivider(),
+		m.viewInput(),
+		m.viewHelp(),
 	)
 }
 
-func (m model) renderStatusBar() string {
-	session := m.cachedSession
-	if session == nil {
-		session = m.agent.GetSession()
-	}
+func (m model) viewStatus() string {
+	session := m.agent.GetSession()
+	sep := dimStyle.Render(" | ")
 
-	left := m.renderStatusLeft(session)
-	right := m.renderStatusRight(session)
+	name := session.Name
+	if name == "" {
+		name = session.ID
+	}
+	left := primaryText.Render("kubectl-ai") + sep + mutedStyle.Render(name) + sep + m.viewState(session.AgentState)
+
+	model := session.ModelID
+	if model == "" {
+		model = "unknown"
+	}
+	right := lipgloss.NewStyle().Foreground(colorSecondary).Render(model)
 
 	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
 	if gap < 0 {
 		gap = 0
 	}
-
-	content := " " + left + strings.Repeat(" ", gap) + right + " "
-	return statusBarStyle.Width(m.width).Render(content)
+	return statusBar.Width(m.width).Render(" " + left + strings.Repeat(" ", gap) + right + " ")
 }
 
-func (m model) renderStatusLeft(session *api.Session) string {
-	sep := statusSepStyle.Render(" | ")
-	appName := statusAppStyle.Render("kubectl-ai")
-
-	sessionName := session.Name
-	if sessionName == "" {
-		sessionName = session.ID
-	}
-	sessionNameStyled := statusSessionStyle.Render(sessionName)
-
-	state := m.renderState(session.AgentState)
-
-	return appName + sep + sessionNameStyled + sep + state
-}
-
-func (m model) renderStatusRight(session *api.Session) string {
-	sep := statusSepStyle.Render(" | ")
-
-	modelName := session.ModelID
-	if modelName == "" {
-		modelName = "unknown"
-	}
-	modelStyled := statusModelStyle.Render(modelName)
-
-	contextStyled := m.renderContextUsage(session)
-
-	return modelStyled + sep + contextStyled
-}
-
-func (m model) renderContextUsage(session *api.Session) string {
-	var contextStr string
-	if session.MaxTokens > 0 && session.TotalTokens > 0 {
-		pct := float64(session.TotalTokens) / float64(session.MaxTokens) * 100
-		contextStr = fmt.Sprintf("%.0f%% context", pct)
-	} else if session.TotalTokens > 0 {
-		// No max tokens known, just show token count
-		contextStr = formatTokenCount(session.TotalTokens)
-	} else {
-		contextStr = "0% context"
+func (m model) viewState(state api.AgentState) string {
+	states := map[api.AgentState]struct {
+		icon, text string
+		style      lipgloss.Style
+	}{
+		api.AgentStateRunning:         {"●", "Running", successText},
+		api.AgentStateInitializing:    {"", "Initializing...", mutedStyle},
+		api.AgentStateWaitingForInput: {"●", "Ready", successText},
+		api.AgentStateIdle:            {"○", "Idle", mutedStyle},
+		api.AgentStateDone:            {"✓", "Done", successText},
+		api.AgentStateExited:          {"○", "Exited", mutedStyle},
 	}
 
-	if session.MaxTokens > 0 {
-		pct := float64(session.TotalTokens) / float64(session.MaxTokens) * 100
-		if pct >= 90 {
-			return statusContextError.Render(contextStr)
-		} else if pct >= 70 {
-			return statusContextWarning.Render(contextStr)
+	if s, ok := states[state]; ok {
+		txt := s.style.Render(s.icon + " " + s.text)
+		if state == api.AgentStateRunning && !m.thinkStart.IsZero() {
+			txt += mutedStyle.Render(" " + formatDuration(time.Since(m.thinkStart)))
 		}
+		return txt
 	}
-	return statusItemStyle.Render(contextStr)
+	return mutedStyle.Render(string(state))
 }
 
-func (m model) renderState(state api.AgentState) string {
-	switch state {
-	case api.AgentStateRunning:
+func (m model) viewDivider() string {
+	return dimStyle.Render(strings.Repeat("─", m.width))
+}
+
+func (m model) viewInput() string {
+	session := m.agent.GetSession()
+
+	// Show dimmed input hint when in choice mode (picker is inline above)
+	if m.inChoiceMode {
+		content := mutedStyle.Render("Use ↑/↓ to navigate, Enter to select")
+		return lipgloss.NewStyle().Padding(0, 1).Render(inputBoxDim.Width(m.width - 4).Render(content))
+	}
+
+	// Show spinner or input
+	if session.AgentState == api.AgentStateRunning || session.AgentState == api.AgentStateInitializing {
 		elapsed := ""
-		if !m.thinkingStart.IsZero() {
-			elapsed = " " + formatDuration(time.Since(m.thinkingStart))
+		if !m.thinkStart.IsZero() {
+			elapsed = " " + formatDuration(time.Since(m.thinkStart))
 		}
-		return statusActiveStyle.Render("● Running") + statusItemStyle.Render(elapsed)
-	case api.AgentStateInitializing:
-		return statusItemStyle.Render(" Initializing...")
-	case api.AgentStateWaitingForInput:
-		return statusActiveStyle.Render("● Ready")
-	case api.AgentStateIdle:
-		return statusItemStyle.Render("○ Idle")
-	case api.AgentStateDone:
-		return lipgloss.NewStyle().Foreground(colorSuccess).Render("✓ Done")
-	case api.AgentStateExited:
-		return statusItemStyle.Render("○ Exited")
-	default:
-		return statusItemStyle.Render(string(state))
-	}
-}
-
-func (m model) renderDivider() string {
-	return dividerStyle.Render(strings.Repeat("─", m.width))
-}
-
-func (m model) renderInputArea() string {
-	state := m.cachedState
-
-	if state == api.AgentStateWaitingForInput && len(m.messages) > 0 {
-		if lastMsg := m.messages[len(m.messages)-1]; lastMsg.Type == api.MessageTypeUserChoiceRequest {
-			if _, ok := lastMsg.Payload.(*api.UserChoiceRequest); ok {
-				return lipgloss.NewStyle().Padding(0, 1).Render(m.list.View())
-			}
-		}
+		content := primaryText.Render(m.spinner.View()+" Thinking...") + mutedStyle.Render(elapsed)
+		return lipgloss.NewStyle().Padding(0, 1).Render(inputBoxDim.Width(m.width - 4).Render(content))
 	}
 
-	inputContent := m.textinput.View()
-	var box string
-	if state == api.AgentStateRunning || state == api.AgentStateInitializing {
-		elapsed := ""
-		if !m.thinkingStart.IsZero() {
-			elapsed = " " + formatDuration(time.Since(m.thinkingStart))
-		}
-		content := spinnerStyle.Render(m.spinner.View()) + statusActiveStyle.Render(" Thinking...") + statusItemStyle.Render(elapsed)
-		// Ensure height matches input box (roughly) to prevent jump
-		content = lipgloss.NewStyle().Height(1).Render(content)
-		box = inputBoxDimStyle.Width(m.width - 4).Render(content)
-	} else {
-		box = inputBoxStyle.Width(m.width - 4).Render(inputContent)
-	}
-
-	return lipgloss.NewStyle().Padding(0, 1).Render(box)
+	return lipgloss.NewStyle().Padding(0, 1).Render(inputBox.Width(m.width - 4).Render(m.input.View()))
 }
 
-func (m model) renderHelp() string {
+func (m model) viewHelp() string {
+	session := m.agent.GetSession()
 	var hints []string
-	if m.cachedState == api.AgentStateRunning {
-		hints = []string{"Thinking...", "Ctrl+C: cancel"}
+	if m.inChoiceMode {
+		hints = []string{"↑/↓: navigate", "Enter: select", "Ctrl+C: quit"}
+	} else if session.AgentState == api.AgentStateRunning {
+		hints = []string{"Ctrl+C: cancel"}
 	} else {
 		hints = []string{"Enter: send", "Esc: clear", "Ctrl+C: quit"}
-	}
-	if m.viewport.TotalLineCount() > m.viewport.Height {
-		hints = append(hints, "↑/↓: scroll")
-	}
-	return helpStyle.Padding(0, 2).Render(strings.Join(hints, " • "))
-}
-
-func (m model) renderSessionPicker() string {
-	if len(m.sessionPickerItems) == 0 {
-		return lipgloss.NewStyle().Padding(1, 2).Foreground(colorTextMuted).Render("No sessions found")
-	}
-
-	titleStyle := lipgloss.NewStyle().Foreground(colorWarning).Bold(true).Padding(0, 0, 1, 0)
-	title := titleStyle.Render("Select a session:")
-
-	// Calculate available height for the list
-	availableHeight := m.height - 8 // status bar, dividers, help, title
-	if availableHeight < 3 {
-		availableHeight = 3
-	}
-
-	// Build the table rows
-	var rows []string
-
-	// Header
-	headerStyle := lipgloss.NewStyle().Foreground(colorTextDim).Bold(true)
-	header := headerStyle.Render(fmt.Sprintf("  %-12s  %-16s  %-16s  %-20s  %s",
-		"ID", "Created", "Last Modified", "Model", "Messages"))
-	rows = append(rows, header)
-
-	// Separator
-	rows = append(rows, lipgloss.NewStyle().Foreground(colorTextDim).Render(strings.Repeat("─", m.width-4)))
-
-	// Session rows - use consistent formatting without relying on style padding
-	selectedStyle := lipgloss.NewStyle().Foreground(colorPrimary).Bold(true)
-	normalStyle := lipgloss.NewStyle().Foreground(colorTextMuted)
-
-	for i, session := range m.sessionPickerItems {
-		// Truncate ID for display
-		displayID := session.ID
-		if len(displayID) > 12 {
-			displayID = displayID[:12]
-		}
-
-		created := session.CreatedAt.Format("Jan 02 15:04")
-		modified := session.LastModified.Format("Jan 02 15:04")
-
-		model := session.ModelID
-		if len(model) > 20 {
-			model = model[:17] + "..."
-		}
-		if model == "" {
-			model = "-"
-		}
-
-		// Build row with consistent prefix width
-		row := fmt.Sprintf("%-12s  %-16s  %-16s  %-20s  %d",
-			displayID, created, modified, model, session.MessageCount)
-
-		if i == m.sessionPickerIndex {
-			rows = append(rows, selectedStyle.Render("> "+row))
-		} else {
-			rows = append(rows, normalStyle.Render("  "+row))
-		}
-
-		// Stop if we've filled the available height
-		if len(rows) >= availableHeight {
-			break
+		if m.viewport.TotalLineCount() > m.viewport.Height {
+			hints = append(hints, "↑/↓: scroll")
 		}
 	}
-
-	content := lipgloss.JoinVertical(lipgloss.Left, rows...)
-	return lipgloss.NewStyle().Padding(1, 2).Render(
-		lipgloss.JoinVertical(lipgloss.Left, title, content),
-	)
-}
-
-func (m model) renderSessionPickerHelp() string {
-	hints := []string{"↑/↓: navigate", "Enter: select", "Esc: cancel"}
-	return helpStyle.Padding(0, 2).Render(strings.Join(hints, " • "))
+	return dimStyle.Padding(0, 2).Render(strings.Join(hints, " • "))
 }
 
 func formatDuration(d time.Duration) string {
-	if d < time.Minute {
+	switch {
+	case d < time.Minute:
 		return fmt.Sprintf("%ds", int(d.Seconds()))
-	}
-	if d < time.Hour {
+	case d < time.Hour:
 		return fmt.Sprintf("%dm%ds", int(d.Minutes()), int(d.Seconds())%60)
+	default:
+		return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
 	}
-	return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
-}
-
-func formatTokenCount(tokens int64) string {
-	if tokens < 1000 {
-		return fmt.Sprintf("%d tokens", tokens)
-	}
-	if tokens < 1000000 {
-		return fmt.Sprintf("%.1fk tokens", float64(tokens)/1000)
-	}
-	return fmt.Sprintf("%.1fM tokens", float64(tokens)/1000000)
 }
