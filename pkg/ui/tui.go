@@ -286,7 +286,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.dirty = true
-		return m.resize(), nil
+		m.resize()
+		return m, nil
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -314,21 +315,34 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) resize() model {
-	contentH := m.height - 7
+func (m *model) resize() {
+	m.viewport.Width = m.width - 2
+	m.input.Width = m.width - 6
+	m.list.SetWidth(m.width - 4)
+	m.updateViewportHeight()
+	m.refresh()
+	m.viewport.GotoBottom()
+}
+
+func (m *model) updateViewportHeight() {
+	// Base: status(1) + 2 dividers(2) + help(1) = 4
+	// Input area: normal input(3) or choice list(list height + prompt + padding)
+	inputAreaHeight := 3
+	if m.inChoiceMode {
+		inputAreaHeight = len(m.list.Items()) + 3 // list items + prompt + padding
+		if inputAreaHeight > 10 {
+			inputAreaHeight = 10 // cap the height
+		}
+	}
+
+	contentH := m.height - 4 - inputAreaHeight
 	if contentH < 5 {
 		contentH = 5
 	}
-	m.viewport.Width = m.width - 2
 	m.viewport.Height = contentH
-	m.input.Width = m.width - 6
-	m.list.SetWidth(m.width - 4)
-	m.refresh()
-	m.viewport.GotoBottom()
-	return m
 }
 
-func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyCtrlC, tea.KeyCtrlD:
 		m.quitting = true
@@ -389,7 +403,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) handleEnter() (tea.Model, tea.Cmd) {
+func (m *model) handleEnter() (tea.Model, tea.Cmd) {
 	// Handle choice selection
 	if m.inChoiceMode {
 		if _, ok := m.list.SelectedItem().(item); ok {
@@ -397,6 +411,7 @@ func (m model) handleEnter() (tea.Model, tea.Cmd) {
 			m.inChoiceMode = false
 			m.choicePrompt = ""
 			m.choiceOptionID = ""
+			m.updateViewportHeight()
 			return m, func() tea.Msg {
 				m.agent.Input <- &api.UserChoiceResponse{Choice: choice}
 				return nil
@@ -434,6 +449,8 @@ func (m *model) handleAgentMsg(_ *api.Message) (tea.Model, tea.Cmd) {
 	m.messages = session.AllMessages()
 	m.dirty = true
 
+	wasInChoiceMode := m.inChoiceMode
+
 	// Check if we're entering choice mode
 	if session.AgentState == api.AgentStateWaitingForInput && len(m.messages) > 0 {
 		if last := m.messages[len(m.messages)-1]; last.Type == api.MessageTypeUserChoiceRequest {
@@ -457,6 +474,11 @@ func (m *model) handleAgentMsg(_ *api.Message) (tea.Model, tea.Cmd) {
 		m.inChoiceMode = false
 		m.choicePrompt = ""
 		m.choiceOptionID = ""
+	}
+
+	// Recalculate viewport height if choice mode changed
+	if wasInChoiceMode != m.inChoiceMode {
+		m.updateViewportHeight()
 	}
 
 	m.refresh()
