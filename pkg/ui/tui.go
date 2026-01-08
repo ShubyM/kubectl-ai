@@ -325,17 +325,8 @@ func (m *model) resize() {
 }
 
 func (m *model) updateViewportHeight() {
-	// Base: status(1) + 2 dividers(2) + help(1) = 4
-	// Input area: normal input(3) or choice list(list height + prompt + padding)
-	inputAreaHeight := 3
-	if m.inChoiceMode {
-		inputAreaHeight = len(m.list.Items()) + 3 // list items + prompt + padding
-		if inputAreaHeight > 10 {
-			inputAreaHeight = 10 // cap the height
-		}
-	}
-
-	contentH := m.height - 4 - inputAreaHeight
+	// Layout: status(1) + 2 dividers(2) + input(3) + help(1) = 7
+	contentH := m.height - 7
 	if contentH < 5 {
 		contentH = 5
 	}
@@ -411,7 +402,6 @@ func (m *model) handleEnter() (tea.Model, tea.Cmd) {
 			m.inChoiceMode = false
 			m.choicePrompt = ""
 			m.choiceOptionID = ""
-			m.updateViewportHeight()
 			return m, func() tea.Msg {
 				m.agent.Input <- &api.UserChoiceResponse{Choice: choice}
 				return nil
@@ -449,8 +439,6 @@ func (m *model) handleAgentMsg(_ *api.Message) (tea.Model, tea.Cmd) {
 	m.messages = session.AllMessages()
 	m.dirty = true
 
-	wasInChoiceMode := m.inChoiceMode
-
 	// Check if we're entering choice mode
 	if session.AgentState == api.AgentStateWaitingForInput && len(m.messages) > 0 {
 		if last := m.messages[len(m.messages)-1]; last.Type == api.MessageTypeUserChoiceRequest {
@@ -474,11 +462,6 @@ func (m *model) handleAgentMsg(_ *api.Message) (tea.Model, tea.Cmd) {
 		m.inChoiceMode = false
 		m.choicePrompt = ""
 		m.choiceOptionID = ""
-	}
-
-	// Recalculate viewport height if choice mode changed
-	if wasInChoiceMode != m.inChoiceMode {
-		m.updateViewportHeight()
 	}
 
 	m.refresh()
@@ -522,6 +505,16 @@ func (m model) renderMessages() string {
 			sb.WriteString(s)
 		}
 	}
+
+	// Render choice picker inline at the end of messages
+	if m.inChoiceMode {
+		sb.WriteString("\n")
+		sb.WriteString(warnText.Render("? " + m.choicePrompt))
+		sb.WriteString("\n\n")
+		sb.WriteString(m.list.View())
+		sb.WriteString("\n")
+	}
+
 	return sb.String()
 }
 
@@ -674,10 +667,10 @@ func (m model) viewDivider() string {
 func (m model) viewInput() string {
 	session := m.agent.GetSession()
 
-	// Show choice list if in choice mode
+	// Show dimmed input hint when in choice mode (picker is inline above)
 	if m.inChoiceMode {
-		return lipgloss.NewStyle().Padding(0, 1).Render(
-			warnText.Render("? "+m.choicePrompt) + "\n" + m.list.View())
+		content := mutedStyle.Render("Use ↑/↓ to navigate, Enter to select")
+		return lipgloss.NewStyle().Padding(0, 1).Render(inputBoxDim.Width(m.width - 4).Render(content))
 	}
 
 	// Show spinner or input
