@@ -98,15 +98,14 @@ var (
 	spinnerStyle = lipgloss.NewStyle().Foreground(colorPrimary)
 	helpStyle    = lipgloss.NewStyle().Foreground(colorTextDim)
 
-	// Status bar styles (cached to avoid allocation on every frame)
 	statusSepStyle       = lipgloss.NewStyle().Foreground(colorTextDim)
 	statusAppStyle       = lipgloss.NewStyle().Foreground(colorPrimary).Bold(true)
 	statusSessionStyle   = lipgloss.NewStyle().Foreground(colorTextMuted)
 	statusModelStyle     = lipgloss.NewStyle().Foreground(colorSecondary)
 	statusContextError   = lipgloss.NewStyle().Foreground(colorError)
 	statusContextWarning = lipgloss.NewStyle().Foreground(colorWarning)
-	dividerStyle = lipgloss.NewStyle().Foreground(colorTextDim)
-	logoStyle    = lipgloss.NewStyle().Foreground(colorPrimary).Bold(true)
+	dividerStyle         = lipgloss.NewStyle().Foreground(colorTextDim)
+	logoStyle            = lipgloss.NewStyle().Foreground(colorPrimary).Bold(true)
 
 	listTitleStyle    = lipgloss.NewStyle().Foreground(colorWarning).Bold(true).Padding(0, 0, 1, 0)
 	listItemStyle     = lipgloss.NewStyle().Foreground(colorTextMuted).PaddingLeft(2)
@@ -272,9 +271,9 @@ type model struct {
 	lastRenderedWidth int
 
 	// Session picker state
-	showSessionPicker   bool
-	sessionPickerItems  []api.SessionInfo
-	sessionPickerIndex  int
+	showSessionPicker  bool
+	sessionPickerItems []api.SessionInfo
+	sessionPickerIndex int
 }
 
 func newModel(agent *agent.Agent) model {
@@ -367,6 +366,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m model) isWaitingForChoice() bool {
+	if m.cachedState != api.AgentStateWaitingForInput || len(m.messages) == 0 {
+		return false
+	}
+	lastMsg := m.messages[len(m.messages)-1]
+	return lastMsg.Type == api.MessageTypeUserChoiceRequest
+}
+
 func (m model) handleResize() model {
 	fixedHeight := 7 // status + 2 dividers + input(3) + help
 	contentHeight := m.height - fixedHeight
@@ -392,6 +399,23 @@ func (m model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Handle session picker navigation
 	if m.showSessionPicker {
 		return m.handleSessionPickerKeypress(msg)
+	}
+
+	// Handle choice selection if active
+	if m.isWaitingForChoice() {
+		// Allow quitting even during choice
+		switch msg.Type {
+		case tea.KeyCtrlC, tea.KeyCtrlD:
+			m.quitting = true
+			return m, tea.Quit
+		case tea.KeyEnter:
+			return m.handleEnter()
+		}
+
+		// Forward other keys to list (up/down/j/k navigation)
+		var cmd tea.Cmd
+		m.list, cmd = m.list.Update(msg)
+		return m, cmd
 	}
 
 	switch msg.Type {
@@ -564,6 +588,19 @@ func (m *model) handleMessage(msg *api.Message) (tea.Model, tea.Cmd) {
 
 	if m.cachedState == api.AgentStateRunning || m.cachedState == api.AgentStateInitializing {
 		return m, m.spinner.Tick
+	}
+
+	// Handle choice request list initialization
+	if msg.Type == api.MessageTypeUserChoiceRequest {
+		if choiceReq, ok := msg.Payload.(*api.UserChoiceRequest); ok {
+			items := make([]list.Item, len(choiceReq.Options))
+			for i, opt := range choiceReq.Options {
+				items[i] = item(opt.Label)
+			}
+			m.list.SetItems(items)
+			// Reset selection
+			m.list.Select(0)
+		}
 	}
 
 	return m, nil
@@ -754,16 +791,35 @@ func (m model) renderStatusBar() string {
 		session = m.agent.GetSession()
 	}
 
-	sep := statusSepStyle.Render(" | ")
+	left := m.renderStatusLeft(session)
+	right := m.renderStatusRight(session)
 
+	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
+	if gap < 0 {
+		gap = 0
+	}
+
+	content := " " + left + strings.Repeat(" ", gap) + right + " "
+	return statusBarStyle.Width(m.width).Render(content)
+}
+
+func (m model) renderStatusLeft(session *api.Session) string {
+	sep := statusSepStyle.Render(" | ")
 	appName := statusAppStyle.Render("kubectl-ai")
+
 	sessionName := session.Name
 	if sessionName == "" {
 		sessionName = session.ID
 	}
 	sessionNameStyled := statusSessionStyle.Render(sessionName)
+
 	state := m.renderState(session.AgentState)
-	left := appName + sep + sessionNameStyled + sep + state
+
+	return appName + sep + sessionNameStyled + sep + state
+}
+
+func (m model) renderStatusRight(session *api.Session) string {
+	sep := statusSepStyle.Render(" | ")
 
 	modelName := session.ModelID
 	if modelName == "" {
@@ -771,7 +827,12 @@ func (m model) renderStatusBar() string {
 	}
 	modelStyled := statusModelStyle.Render(modelName)
 
-	// Show context usage as percentage
+	contextStyled := m.renderContextUsage(session)
+
+	return modelStyled + sep + contextStyled
+}
+
+func (m model) renderContextUsage(session *api.Session) string {
 	var contextStr string
 	if session.MaxTokens > 0 && session.TotalTokens > 0 {
 		pct := float64(session.TotalTokens) / float64(session.MaxTokens) * 100
@@ -782,30 +843,16 @@ func (m model) renderStatusBar() string {
 	} else {
 		contextStr = "0% context"
 	}
-	// Color based on usage level
-	var contextStyled string
+
 	if session.MaxTokens > 0 {
 		pct := float64(session.TotalTokens) / float64(session.MaxTokens) * 100
 		if pct >= 90 {
-			contextStyled = statusContextError.Render(contextStr)
+			return statusContextError.Render(contextStr)
 		} else if pct >= 70 {
-			contextStyled = statusContextWarning.Render(contextStr)
-		} else {
-			contextStyled = statusItemStyle.Render(contextStr)
+			return statusContextWarning.Render(contextStr)
 		}
-	} else {
-		contextStyled = statusItemStyle.Render(contextStr)
 	}
-
-	right := modelStyled + sep + contextStyled
-
-	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
-	if gap < 0 {
-		gap = 0
-	}
-
-	content := " " + left + strings.Repeat(" ", gap) + right + " "
-	return statusBarStyle.Width(m.width).Render(content)
+	return statusItemStyle.Render(contextStr)
 }
 
 func (m model) renderState(state api.AgentState) string {
@@ -840,16 +887,8 @@ func (m model) renderInputArea() string {
 
 	if state == api.AgentStateWaitingForInput && len(m.messages) > 0 {
 		if lastMsg := m.messages[len(m.messages)-1]; lastMsg.Type == api.MessageTypeUserChoiceRequest {
-			if choiceReq, ok := lastMsg.Payload.(*api.UserChoiceRequest); ok {
-				items := make([]list.Item, len(choiceReq.Options))
-				for i, opt := range choiceReq.Options {
-					items[i] = item(opt.Label)
-				}
-				m.list.SetItems(items)
-				title := listTitleStyle.Render("? " + choiceReq.Prompt)
-				return lipgloss.NewStyle().Padding(0, 1).Render(
-					lipgloss.JoinVertical(lipgloss.Left, title, m.list.View()),
-				)
+			if _, ok := lastMsg.Payload.(*api.UserChoiceRequest); ok {
+				return lipgloss.NewStyle().Padding(0, 1).Render(m.list.View())
 			}
 		}
 	}
