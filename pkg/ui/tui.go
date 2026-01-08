@@ -231,6 +231,10 @@ type model struct {
 	dirty      bool
 	quitting   bool
 	thinkStart time.Time
+	// Choice mode tracking
+	inChoiceMode   bool
+	choicePrompt   string
+	choiceOptionID string // Track which choice request we initialized for
 }
 
 func newModel(agent *agent.Agent) model {
@@ -335,8 +339,18 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyEnter:
 		return m.handleEnter()
 	case tea.KeyUp:
+		if m.inChoiceMode {
+			var cmd tea.Cmd
+			m.list, cmd = m.list.Update(msg)
+			return m, cmd
+		}
 		m.viewport.ScrollUp(1)
 	case tea.KeyDown:
+		if m.inChoiceMode {
+			var cmd tea.Cmd
+			m.list, cmd = m.list.Update(msg)
+			return m, cmd
+		}
 		m.viewport.ScrollDown(1)
 	case tea.KeyPgUp:
 		m.viewport.ScrollUp(m.viewport.Height / 2)
@@ -348,6 +362,24 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.viewport.ScrollUp(m.viewport.Height / 2)
 		case "ctrl+d":
 			m.viewport.ScrollDown(m.viewport.Height / 2)
+		case "j":
+			if m.inChoiceMode {
+				var cmd tea.Cmd
+				m.list, cmd = m.list.Update(tea.KeyMsg{Type: tea.KeyDown})
+				return m, cmd
+			}
+			var cmd tea.Cmd
+			m.input, cmd = m.input.Update(msg)
+			return m, cmd
+		case "k":
+			if m.inChoiceMode {
+				var cmd tea.Cmd
+				m.list, cmd = m.list.Update(tea.KeyMsg{Type: tea.KeyUp})
+				return m, cmd
+			}
+			var cmd tea.Cmd
+			m.input, cmd = m.input.Update(msg)
+			return m, cmd
 		default:
 			var cmd tea.Cmd
 			m.input, cmd = m.input.Update(msg)
@@ -358,20 +390,19 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) handleEnter() (tea.Model, tea.Cmd) {
-	session := m.agent.GetSession()
-
 	// Handle choice selection
-	if session.AgentState == api.AgentStateWaitingForInput && len(m.messages) > 0 {
-		if last := m.messages[len(m.messages)-1]; last.Type == api.MessageTypeUserChoiceRequest {
-			if _, ok := m.list.SelectedItem().(item); ok {
-				choice := m.list.Index() + 1
-				return m, func() tea.Msg {
-					m.agent.Input <- &api.UserChoiceResponse{Choice: choice}
-					return nil
-				}
+	if m.inChoiceMode {
+		if _, ok := m.list.SelectedItem().(item); ok {
+			choice := m.list.Index() + 1
+			m.inChoiceMode = false
+			m.choicePrompt = ""
+			m.choiceOptionID = ""
+			return m, func() tea.Msg {
+				m.agent.Input <- &api.UserChoiceResponse{Choice: choice}
+				return nil
 			}
-			return m, nil
 		}
+		return m, nil
 	}
 
 	value := strings.TrimSpace(m.input.Value())
@@ -402,6 +433,32 @@ func (m *model) handleAgentMsg(_ *api.Message) (tea.Model, tea.Cmd) {
 	session := m.agent.GetSession()
 	m.messages = session.AllMessages()
 	m.dirty = true
+
+	// Check if we're entering choice mode
+	if session.AgentState == api.AgentStateWaitingForInput && len(m.messages) > 0 {
+		if last := m.messages[len(m.messages)-1]; last.Type == api.MessageTypeUserChoiceRequest {
+			// Only initialize list if this is a new choice request
+			if last.ID != m.choiceOptionID {
+				if req, ok := last.Payload.(*api.UserChoiceRequest); ok {
+					items := make([]list.Item, len(req.Options))
+					for i, opt := range req.Options {
+						items[i] = item(opt.Label)
+					}
+					m.list.SetItems(items)
+					m.list.Select(0)
+					m.inChoiceMode = true
+					m.choicePrompt = req.Prompt
+					m.choiceOptionID = last.ID
+				}
+			}
+		}
+	} else {
+		// Clear choice mode if we're not in waiting state
+		m.inChoiceMode = false
+		m.choicePrompt = ""
+		m.choiceOptionID = ""
+	}
+
 	m.refresh()
 	m.viewport.GotoBottom()
 
@@ -456,6 +513,10 @@ func (m model) renderMessage(msg *api.Message, r *glamour.TermRenderer, w int) s
 	if msg.Type == api.MessageTypeToolCallResponse {
 		return ""
 	}
+	// Skip choice requests - they're rendered in the input area instead
+	if msg.Type == api.MessageTypeUserChoiceRequest {
+		return ""
+	}
 
 	// Check cache (except tool calls which show status)
 	if msg.ID != "" && msg.Type != api.MessageTypeToolCallRequest {
@@ -470,10 +531,6 @@ func (m model) renderMessage(msg *api.Message, r *glamour.TermRenderer, w int) s
 		result = m.renderToolCall(msg, w)
 	case api.MessageTypeError:
 		result = m.renderError(msg, w)
-	case api.MessageTypeUserChoiceRequest:
-		if req, ok := msg.Payload.(*api.UserChoiceRequest); ok {
-			result = warnText.Render("? "+req.Prompt) + "\n\n"
-		}
 	default:
 		result = m.renderTextMsg(msg, r, w)
 	}
@@ -595,19 +652,10 @@ func (m model) viewDivider() string {
 func (m model) viewInput() string {
 	session := m.agent.GetSession()
 
-	// Show choice list if applicable
-	if session.AgentState == api.AgentStateWaitingForInput && len(m.messages) > 0 {
-		if last := m.messages[len(m.messages)-1]; last.Type == api.MessageTypeUserChoiceRequest {
-			if req, ok := last.Payload.(*api.UserChoiceRequest); ok {
-				items := make([]list.Item, len(req.Options))
-				for i, opt := range req.Options {
-					items[i] = item(opt.Label)
-				}
-				m.list.SetItems(items)
-				return lipgloss.NewStyle().Padding(0, 1).Render(
-					warnText.Render("? "+req.Prompt) + "\n" + m.list.View())
-			}
-		}
+	// Show choice list if in choice mode
+	if m.inChoiceMode {
+		return lipgloss.NewStyle().Padding(0, 1).Render(
+			warnText.Render("? "+m.choicePrompt) + "\n" + m.list.View())
 	}
 
 	// Show spinner or input
@@ -625,12 +673,16 @@ func (m model) viewInput() string {
 
 func (m model) viewHelp() string {
 	session := m.agent.GetSession()
-	hints := []string{"Enter: send", "Esc: clear", "Ctrl+C: quit"}
-	if session.AgentState == api.AgentStateRunning {
+	var hints []string
+	if m.inChoiceMode {
+		hints = []string{"↑/↓: navigate", "Enter: select", "Ctrl+C: quit"}
+	} else if session.AgentState == api.AgentStateRunning {
 		hints = []string{"Thinking...", "Ctrl+C: cancel"}
-	}
-	if m.viewport.TotalLineCount() > m.viewport.Height {
-		hints = append(hints, "↑/↓: scroll")
+	} else {
+		hints = []string{"Enter: send", "Esc: clear", "Ctrl+C: quit"}
+		if m.viewport.TotalLineCount() > m.viewport.Height {
+			hints = append(hints, "↑/↓: scroll")
+		}
 	}
 	return dimStyle.Padding(0, 2).Render(strings.Join(hints, " • "))
 }
