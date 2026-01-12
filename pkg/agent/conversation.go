@@ -185,16 +185,7 @@ func (c *Agent) setAgentState(newState api.AgentState) {
 	}
 }
 
-// updateTokenUsage extracts token counts from usage metadata and updates the session
-func (c *Agent) updateTokenUsage(usageMetadata any) {
-	if usage, ok := usageMetadata.(gollm.TokenUsage); ok {
-		c.sessionMu.Lock()
-		c.Session.InputTokens = usage.GetInputTokens()
-		c.Session.OutputTokens = usage.GetOutputTokens()
-		c.Session.TotalTokens = usage.GetTotalTokens()
-		c.sessionMu.Unlock()
-	}
-}
+
 
 func (c *Agent) AgentState() api.AgentState {
 	c.sessionMu.Lock()
@@ -237,8 +228,7 @@ func (s *Agent) Init(ctx context.Context) error {
 			s.Session.LastModified = time.Now()
 		}
 		s.Session.Messages = s.Session.ChatMessageStore.ChatMessages()
-		// Set max tokens based on model
-		s.Session.MaxTokens = getModelContextWindow(s.Model)
+
 	} else {
 		return fmt.Errorf("agent requires a session to be provided")
 	}
@@ -645,10 +635,8 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 				// accumulator for streamed text
 				var streamedText string
 				var llmError error
-				var lastResponse gollm.ChatResponse
 
 				for response, err := range stream {
-					lastResponse = response
 					if err != nil {
 						log.Error(err, "error reading streaming LLM response")
 						llmError = err
@@ -696,10 +684,7 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 					continue
 				}
 
-				// Update token usage from the response
-				if lastResponse != nil {
-					c.updateTokenUsage(lastResponse.UsageMetadata())
-				}
+
 
 				log.Info("streamedText", "streamedText", streamedText)
 
@@ -1459,40 +1444,4 @@ func (p *ShimPart) AsFunctionCalls() ([]gollm.FunctionCall, bool) {
 	return nil, false
 }
 
-// modelContextWindows maps model name patterns to their context window sizes.
-// Order matters - more specific patterns should come first.
-var modelContextWindows = []struct {
-	pattern string
-	tokens  int64
-}{
-	// Gemini models
-	{"gemini-2.0", 1048576},       // 1M tokens
-	{"gemini-2.5", 1048576},       // 1M tokens
-	{"gemini-1.5-pro", 2097152},   // 2M tokens
-	{"gemini-1.5-flash", 1048576}, // 1M tokens
-	{"gemini", 32768},             // 32k default for older Gemini
 
-	// OpenAI models
-	{"gpt-4o", 128000},      // 128k tokens
-	{"gpt-4-turbo", 128000}, // 128k tokens
-	{"gpt-4-32k", 32768},
-	{"gpt-4", 8192},
-	{"gpt-3.5-turbo-16k", 16384},
-	{"gpt-3.5", 4096},
-
-	// Claude models
-	{"claude-3", 200000}, // 200k tokens
-	{"claude-4", 200000}, // 200k tokens
-	{"claude-2", 100000}, // 100k tokens
-	{"claude", 100000},
-}
-
-func getModelContextWindow(model string) int64 {
-	m := strings.ToLower(model)
-	for _, entry := range modelContextWindows {
-		if strings.Contains(m, entry.pattern) {
-			return entry.tokens
-		}
-	}
-	return 128000 // default fallback
-}

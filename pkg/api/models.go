@@ -31,11 +31,6 @@ type Session struct {
 	ChatMessageStore ChatMessageStore
 	// MCP status information
 	MCPStatus *MCPStatus
-	// Token usage tracking
-	InputTokens  int64
-	OutputTokens int64
-	TotalTokens  int64
-	MaxTokens    int64 // Context window size for the model
 }
 
 type AgentState string

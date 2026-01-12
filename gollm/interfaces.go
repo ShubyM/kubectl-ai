@@ -136,12 +136,7 @@ type FunctionCallResult struct {
 	Result map[string]any `json:"result,omitempty"`
 }
 
-// TokenUsage provides token count information from LLM responses
-type TokenUsage interface {
-	GetInputTokens() int64
-	GetOutputTokens() int64
-	GetTotalTokens() int64
-}
+
 
 // ChatResponse is a generic chat response from the LLM.
 type ChatResponse interface {
