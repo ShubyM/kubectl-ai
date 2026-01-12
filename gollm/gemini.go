@@ -548,7 +548,6 @@ func (r *GeminiChatResponse) UsageMetadata() any {
 	return r.geminiResponse.UsageMetadata
 }
 
-
 // Candidates returns the candidates for the response.
 func (r *GeminiChatResponse) Candidates() []Candidate {
 	var candidates []Candidate

@@ -136,8 +136,6 @@ type FunctionCallResult struct {
 	Result map[string]any `json:"result,omitempty"`
 }
 
-
-
 // ChatResponse is a generic chat response from the LLM.
 type ChatResponse interface {
 	UsageMetadata() any

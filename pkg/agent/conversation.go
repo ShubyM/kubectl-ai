@@ -184,9 +184,6 @@ func (c *Agent) setAgentState(newState api.AgentState) {
 		c.Session.LastModified = time.Now()
 	}
 }
-
-
-
 func (c *Agent) AgentState() api.AgentState {
 	c.sessionMu.Lock()
 	defer c.sessionMu.Unlock()
@@ -683,8 +680,6 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 					c.lastErr = llmError
 					continue
 				}
-
-
 
 				log.Info("streamedText", "streamedText", streamedText)
 
@@ -1443,5 +1438,3 @@ func (p *ShimPart) AsFunctionCalls() ([]gollm.FunctionCall, bool) {
 	}
 	return nil, false
 }
-
-
