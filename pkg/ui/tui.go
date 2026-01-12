@@ -108,12 +108,6 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, idx int, li list.Item) {
 	}
 }
 
-// Username caching
-var (
-	cachedUsername string
-	usernameOnce   sync.Once
-)
-
 // TUI is the terminal user interface for the agent.
 type TUI struct {
 	program *tea.Program
@@ -364,10 +358,17 @@ func (m *model) resize() {
 func (m *model) updateViewportHeight() {
 	// Layout: status(1) + 2 dividers(2) + input(3) + help(1) = 7
 	contentH := m.height - 7
-	if contentH < 5 {
-		contentH = 5
-	}
+
+	contentH = max(contentH, 5)
 	m.viewport.Height = contentH
+}
+
+func (m *model) navigateList(keyType tea.KeyType) tea.Cmd {
+	var cmd tea.Cmd
+	m.list, cmd = m.list.Update(tea.KeyMsg{Type: keyType})
+	m.dirty = true
+	m.refresh()
+	return cmd
 }
 
 func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -382,20 +383,12 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleEnter()
 	case tea.KeyUp:
 		if m.inChoiceMode {
-			var cmd tea.Cmd
-			m.list, cmd = m.list.Update(msg)
-			m.dirty = true
-			m.refresh()
-			return m, cmd
+			return m, m.navigateList(tea.KeyUp)
 		}
 		m.viewport.ScrollUp(1)
 	case tea.KeyDown:
 		if m.inChoiceMode {
-			var cmd tea.Cmd
-			m.list, cmd = m.list.Update(msg)
-			m.dirty = true
-			m.refresh()
-			return m, cmd
+			return m, m.navigateList(tea.KeyDown)
 		}
 		m.viewport.ScrollDown(1)
 	case tea.KeyPgUp:
@@ -410,31 +403,17 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.viewport.ScrollDown(m.viewport.Height / 2)
 		case "j":
 			if m.inChoiceMode {
-				var cmd tea.Cmd
-				m.list, cmd = m.list.Update(tea.KeyMsg{Type: tea.KeyDown})
-				m.dirty = true
-				m.refresh()
-				return m, cmd
+				return m, m.navigateList(tea.KeyDown)
 			}
-			var cmd tea.Cmd
-			m.input, cmd = m.input.Update(msg)
-			return m, cmd
 		case "k":
 			if m.inChoiceMode {
-				var cmd tea.Cmd
-				m.list, cmd = m.list.Update(tea.KeyMsg{Type: tea.KeyUp})
-				m.dirty = true
-				m.refresh()
-				return m, cmd
+				return m, m.navigateList(tea.KeyUp)
 			}
-			var cmd tea.Cmd
-			m.input, cmd = m.input.Update(msg)
-			return m, cmd
-		default:
-			var cmd tea.Cmd
-			m.input, cmd = m.input.Update(msg)
-			return m, cmd
 		}
+		// Default: send to text input
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(msg)
+		return m, cmd
 	}
 	return m, nil
 }
@@ -486,28 +465,16 @@ func (m *model) handleEnter() (tea.Model, tea.Cmd) {
 		Payload:   value,
 		Timestamp: time.Now(),
 	})
-
 	m.input.Reset()
-
-	// Intercept "sessions" command
-	if value == "sessions" {
-		m.dirty = true
-		m.refresh()
-		m.viewport.GotoBottom()
-		return m, m.fetchSessions
-	}
-
-	// Add user message
-	m.messages = append(m.messages, &api.Message{
-		Source:    api.MessageSourceUser,
-		Type:      api.MessageTypeText,
-		Payload:   value,
-		Timestamp: time.Now(),
-	})
 	m.dirty = true
 	m.refresh()
 	m.viewport.GotoBottom()
-	m.input.Reset()
+
+	// Intercept "sessions" command
+	if value == "sessions" {
+		return m, m.fetchSessions
+	}
+
 	m.thinkStart = time.Now()
 
 	return m, func() tea.Msg {
@@ -516,56 +483,48 @@ func (m *model) handleEnter() (tea.Model, tea.Cmd) {
 	}
 }
 
-func (m *model) handleAgentMsg(_ *api.Message) (tea.Model, tea.Cmd) {
+func (m *model) handleAgentMsg(msg *api.Message) (tea.Model, tea.Cmd) {
 	session := m.agent.GetSession()
 	m.messages = session.AllMessages()
 	m.dirty = true
 
-	// Check if we're entering choice mode
-	if session.AgentState == api.AgentStateWaitingForInput && len(m.messages) > 0 {
-		last := m.messages[len(m.messages)-1]
-		switch last.Type {
-		case api.MessageTypeUserChoiceRequest:
-			// Only initialize list if this is a new choice request
-			if last.ID != m.choiceOptionID {
-				if req, ok := last.Payload.(*api.UserChoiceRequest); ok {
-					items := make([]list.Item, len(req.Options))
-					for i, opt := range req.Options {
-						items[i] = item(opt.Label)
-					}
-					m.list.SetItems(items)
-					m.list.Select(0)
-					m.inChoiceMode = true
-					m.choicePrompt = req.Prompt
-					m.choiceOptionID = last.ID
-					m.choiceType = "confirm"
-				}
+	// Check if we're entering choice mode - use the incoming message directly
+	// to avoid race conditions where the message isn't yet in AllMessages()
+	if msg.Type == api.MessageTypeUserChoiceRequest {
+		if req, ok := msg.Payload.(*api.UserChoiceRequest); ok {
+			items := make([]list.Item, len(req.Options))
+			for i, opt := range req.Options {
+				items[i] = item(opt.Label)
 			}
-		case api.MessageTypeSessionPickerRequest:
-			if last.ID != m.choiceOptionID {
-				if req, ok := last.Payload.(*api.SessionPickerRequest); ok {
-					items := make([]list.Item, len(req.Sessions))
-					ids := make([]string, len(req.Sessions))
-					for i, s := range req.Sessions {
-						label := fmt.Sprintf("%s (%s) • %d msgs", s.ID, s.ModelID, s.MessageCount)
-						if s.Name != "" {
-							label = fmt.Sprintf("%s (%s) • %s • %d msgs", s.Name, s.ModelID, s.ID, s.MessageCount)
-						}
-						items[i] = item(label)
-						ids[i] = s.ID
-					}
-					m.list.SetItems(items)
-					m.list.Select(0)
-					m.inChoiceMode = true
-					m.choicePrompt = "Select a session to resume"
-					m.choiceOptionID = last.ID
-					m.choiceType = "session"
-					m.sessionIDs = ids
-				}
-			}
+			m.list.SetItems(items)
+			m.list.Select(0)
+			m.inChoiceMode = true
+			m.choicePrompt = req.Prompt
+			m.choiceOptionID = msg.ID
+			m.choiceType = "confirm"
 		}
-	} else {
-		// Clear choice mode if we're not in waiting state
+	} else if msg.Type == api.MessageTypeSessionPickerRequest {
+		if req, ok := msg.Payload.(*api.SessionPickerRequest); ok {
+			items := make([]list.Item, len(req.Sessions))
+			ids := make([]string, len(req.Sessions))
+			for i, s := range req.Sessions {
+				label := fmt.Sprintf("%s (%s) • %d msgs", s.ID, s.ModelID, s.MessageCount)
+				if s.Name != "" {
+					label = fmt.Sprintf("%s (%s) • %s • %d msgs", s.Name, s.ModelID, s.ID, s.MessageCount)
+				}
+				items[i] = item(label)
+				ids[i] = s.ID
+			}
+			m.list.SetItems(items)
+			m.list.Select(0)
+			m.inChoiceMode = true
+			m.choicePrompt = "Select a session to resume"
+			m.choiceOptionID = msg.ID
+			m.choiceType = "session"
+			m.sessionIDs = ids
+		}
+	} else if session.AgentState != api.AgentStateWaitingForInput {
+		// Clear choice mode if we're not in waiting state and this isn't a choice message
 		m.inChoiceMode = false
 		m.choicePrompt = ""
 		m.choiceOptionID = ""
@@ -712,18 +671,18 @@ func (m model) View() string {
 		return mutedStyle.Padding(1).Render("Goodbye!")
 	}
 
+	session := m.agent.GetSession()
 	return lipgloss.JoinVertical(lipgloss.Left,
-		m.viewStatus(),
+		m.viewStatus(session),
 		m.viewDivider(),
 		lipgloss.NewStyle().PaddingLeft(1).Render(m.viewport.View()),
 		m.viewDivider(),
-		m.viewInput(),
-		m.viewHelp(),
+		m.viewInput(session.AgentState),
+		m.viewHelp(session.AgentState),
 	)
 }
 
-func (m model) viewStatus() string {
-	session := m.agent.GetSession()
+func (m model) viewStatus(session *api.Session) string {
 	sep := dimStyle.Render(" | ")
 
 	name := session.Name
@@ -772,9 +731,7 @@ func (m model) viewDivider() string {
 	return dimStyle.Render(strings.Repeat("─", m.width))
 }
 
-func (m model) viewInput() string {
-	session := m.agent.GetSession()
-
+func (m model) viewInput(state api.AgentState) string {
 	// Show dimmed input hint when in choice mode (picker is inline above)
 	if m.inChoiceMode {
 		content := mutedStyle.Render("Use ↑/↓ to navigate, Enter to select")
@@ -782,7 +739,7 @@ func (m model) viewInput() string {
 	}
 
 	// Show spinner or input
-	if session.AgentState == api.AgentStateRunning || session.AgentState == api.AgentStateInitializing {
+	if state == api.AgentStateRunning || state == api.AgentStateInitializing {
 		elapsed := ""
 		if !m.thinkStart.IsZero() {
 			elapsed = " " + formatDuration(time.Since(m.thinkStart))
@@ -794,12 +751,11 @@ func (m model) viewInput() string {
 	return lipgloss.NewStyle().Padding(0, 1).Render(inputBox.Width(m.width - 4).Render(m.input.View()))
 }
 
-func (m model) viewHelp() string {
-	session := m.agent.GetSession()
+func (m model) viewHelp(state api.AgentState) string {
 	var hints []string
 	if m.inChoiceMode {
 		hints = []string{"↑/↓: navigate", "Enter: select", "Ctrl+C: quit"}
-	} else if session.AgentState == api.AgentStateRunning {
+	} else if state == api.AgentStateRunning {
 		hints = []string{"Ctrl+C: cancel"}
 	} else {
 		hints = []string{"Enter: send", "Esc: clear", "Ctrl+C: quit"}
