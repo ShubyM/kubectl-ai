@@ -356,8 +356,8 @@ func (m *model) resize() {
 }
 
 func (m *model) updateViewportHeight() {
-	// Layout: status(1) + 2 dividers(2) + input(3) + help(1) = 7
-	contentH := m.height - 7
+	// Layout: status(1) + 2 dividers(2) + input(3) + help(1) + bottom padding(1) = 8
+	contentH := m.height - 8
 
 	contentH = max(contentH, 5)
 	m.viewport.Height = contentH
@@ -523,8 +523,8 @@ func (m *model) handleAgentMsg(msg *api.Message) (tea.Model, tea.Cmd) {
 			m.choiceType = "session"
 			m.sessionIDs = ids
 		}
-	} else if session.AgentState != api.AgentStateWaitingForInput {
-		// Clear choice mode if we're not in waiting state and this isn't a choice message
+	} else if session.AgentState == api.AgentStateDone || session.AgentState == api.AgentStateExited {
+		// Clear choice mode if we're done or exited
 		m.inChoiceMode = false
 		m.choicePrompt = ""
 		m.choiceOptionID = ""
@@ -763,7 +763,7 @@ func (m model) viewHelp(state api.AgentState) string {
 			hints = append(hints, "↑/↓: scroll")
 		}
 	}
-	return dimStyle.Padding(0, 2).Render(strings.Join(hints, " • "))
+	return dimStyle.Padding(0, 2, 1, 2).Render(strings.Join(hints, " • "))
 }
 
 func formatDuration(d time.Duration) string {
