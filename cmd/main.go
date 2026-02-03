@@ -396,20 +396,17 @@ func RunRootCommand(ctx context.Context, opt Options, args []string) error {
 
 	klog.Info("Application started", "pid", os.Getpid())
 
-	var recorder journal.Recorder
+	recorders := []journal.Recorder{&journal.LogRecorder{}}
 	if opt.TracePath != "" {
-		var fileRecorder journal.Recorder
-		fileRecorder, err = journal.NewFileRecorder(opt.TracePath)
-		if err != nil {
-			return fmt.Errorf("creating trace recorder: %w", err)
+		fileRecorder, ferr := journal.NewFileRecorder(opt.TracePath)
+		if ferr != nil {
+			return fmt.Errorf("creating trace recorder: %w", ferr)
 		}
-		defer fileRecorder.Close()
-		recorder = fileRecorder
-	} else {
-		// Ensure we always have a recorder, to avoid nil checks
-		recorder = &journal.LogRecorder{}
-		defer recorder.Close()
+		recorders = append(recorders, fileRecorder)
 	}
+
+	recorder := journal.NewMultiRecorder(recorders...)
+	defer recorder.Close()
 
 	// Initialize session management
 	var session *api.Session

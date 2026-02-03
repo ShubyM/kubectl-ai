@@ -155,7 +155,6 @@ func (s *Agent) GetSession() *api.Session {
 // addMessage creates a new message, adds it to the session, and sends it to the output channel
 func (c *Agent) addMessage(source api.MessageSource, messageType api.MessageType, payload any) *api.Message {
 	c.sessionMu.Lock()
-	defer c.sessionMu.Unlock()
 	message := &api.Message{
 		ID:        uuid.New().String(),
 		Source:    source,
@@ -167,7 +166,23 @@ func (c *Agent) addMessage(source api.MessageSource, messageType api.MessageType
 	// session should always have a ChatMessageStore at this point
 	c.Session.ChatMessageStore.AddChatMessage(message)
 	c.Session.LastModified = time.Now()
+	c.sessionMu.Unlock()
+
 	c.Output <- message
+
+	if c.Recorder != nil {
+		_ = c.Recorder.Write(context.Background(), &journal.Event{
+			Timestamp: message.Timestamp,
+			Action:    journal.ActionConversation,
+			Payload: map[string]any{
+				"id":        message.ID,
+				"sessionID": c.Session.ID,
+				"source":    message.Source,
+				"type":      message.Type,
+				"payload":   message.Payload,
+			},
+		})
+	}
 	return message
 }
 

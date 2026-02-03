@@ -17,9 +17,11 @@ package journal
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 
 	"sigs.k8s.io/yaml"
@@ -33,6 +35,60 @@ type Recorder interface {
 	Write(ctx context.Context, event *Event) error
 }
 
+// MultiRecorder fans out writes and closes to multiple recorders.
+// A default LogRecorder is used if no recorders are provided.
+type MultiRecorder struct {
+	recorders []Recorder
+}
+
+// NewMultiRecorder constructs a recorder that writes to all provided recorders.
+func NewMultiRecorder(recorders ...Recorder) Recorder {
+	filtered := make([]Recorder, 0, len(recorders))
+	for _, r := range recorders {
+		if r != nil {
+			filtered = append(filtered, r)
+		}
+	}
+
+	if len(filtered) == 0 {
+		filtered = append(filtered, &LogRecorder{})
+	}
+
+	return &MultiRecorder{recorders: filtered}
+}
+
+func (r *MultiRecorder) Write(ctx context.Context, event *Event) error {
+	var errs []error
+
+	for _, recorder := range r.recorders {
+		if err := recorder.Write(ctx, event); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+
+	return nil
+}
+
+func (r *MultiRecorder) Close() error {
+	var errs []error
+
+	for _, recorder := range r.recorders {
+		if err := recorder.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+
+	return nil
+}
+
 // FileRecorder writes a structured log of the agent's actions and observations to a file.
 type FileRecorder struct {
 	f *os.File
@@ -40,6 +96,12 @@ type FileRecorder struct {
 
 // NewFileRecorder creates a new FileRecorder that writes to the given file.
 func NewFileRecorder(path string) (*FileRecorder, error) {
+	if dir := filepath.Dir(path); dir != "." && dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, fmt.Errorf("creating trace directory: %w", err)
+		}
+	}
+
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("opening file: %w", err)
@@ -80,6 +142,7 @@ const (
 	ActionHTTPRequest  = "http.request"
 	ActionHTTPResponse = "http.response"
 	ActionHTTPError    = "http.error"
+	ActionConversation = "conversation.message"
 )
 
 // ActionUIRender is for an event that indicates we wrote output to the UI
