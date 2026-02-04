@@ -437,10 +437,8 @@ func (c *Agent) Run(ctx context.Context, initialQuery string) error {
 				c.pendingFunctionCalls = []ToolCallAnalysis{}
 			}
 		} else {
-			if len(c.Session.Messages) == 0 {
-				// Starting new session
-				c.addMessage(api.MessageSourceAgent, api.MessageTypeText, "Hey there, what can I help you with today?")
-			}
+			// Starting a new interaction (even when session history exists)
+			c.addMessage(api.MessageSourceAgent, api.MessageTypeText, "Hey there, what can I help you with today?")
 		}
 		c.lastErr = nil
 		for {

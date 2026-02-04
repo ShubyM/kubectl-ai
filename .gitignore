@@ -24,6 +24,7 @@ app.log
 *.test
 *.prof
 *.out
+.gocache/
 .aider*
 # Added by goreleaser init:
 dist/
